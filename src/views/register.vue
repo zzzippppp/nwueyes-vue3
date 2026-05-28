@@ -98,25 +98,31 @@ const equalToPassword = (rule, value, callback) => {
   }
 };
 
-const registerRules = {
-  username: [
-    { required: true, trigger: "blur", message: "请输入您的账号" },
-    { min: 2, max: 20, message: "用户账号长度必须介于 2 和 20 之间", trigger: "blur" }
-  ],
-  password: [
-    { required: true, trigger: "blur", message: "请输入您的密码" },
-    { min: 5, max: 20, message: "用户密码长度必须介于 5 和 20 之间", trigger: "blur" }
-  ],
-  confirmPassword: [
-    { required: true, trigger: "blur", message: "请再次输入您的密码" },
-    { required: true, validator: equalToPassword, trigger: "blur" }
-  ],
-  code: [{ required: true, trigger: "change", message: "请输入验证码" }]
-};
+const captchaEnabled = ref(false);
+
+const registerRules = computed(() => {
+  const rules = {
+    username: [
+      { required: true, trigger: "blur", message: "请输入您的账号" },
+      { min: 2, max: 20, message: "用户账号长度必须介于 2 和 20 之间", trigger: "blur" }
+    ],
+    password: [
+      { required: true, trigger: "blur", message: "请输入您的密码" },
+      { min: 5, max: 20, message: "用户密码长度必须介于 5 和 20 之间", trigger: "blur" }
+    ],
+    confirmPassword: [
+      { required: true, trigger: "blur", message: "请再次输入您的密码" },
+      { required: true, validator: equalToPassword, trigger: "blur" }
+    ]
+  };
+  if (captchaEnabled.value) {
+    rules.code = [{ required: true, trigger: "change", message: "请输入验证码" }];
+  }
+  return rules;
+});
 
 const codeUrl = ref("");
 const loading = ref(false);
-const captchaEnabled = ref(true);
 
 function handleRegister() {
   proxy.$refs.registerRef.validate(valid => {
@@ -132,7 +138,7 @@ function handleRegister() {
         }).catch(() => {});
       }).catch(() => {
         loading.value = false;
-        if (captchaEnabled) {
+        if (captchaEnabled.value) {
           getCode();
         }
       });
@@ -142,7 +148,7 @@ function handleRegister() {
 
 function getCode() {
   getCodeImg().then(res => {
-    captchaEnabled.value = res.captchaEnabled === undefined ? true : res.captchaEnabled;
+    captchaEnabled.value = res.captchaEnabled === true;
     if (captchaEnabled.value) {
       codeUrl.value = "data:image/gif;base64," + res.img;
       registerForm.value.uuid = res.uuid;

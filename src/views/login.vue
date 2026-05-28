@@ -83,16 +83,21 @@ const loginForm = ref({
   uuid: ""
 });
 
-const loginRules = {
-  username: [{ required: true, trigger: "blur", message: "请输入您的账号" }],
-  password: [{ required: true, trigger: "blur", message: "请输入您的密码" }],
-  code: [{ required: true, trigger: "change", message: "请输入验证码" }]
-};
+const loginRules = computed(() => {
+  const rules = {
+    username: [{ required: true, trigger: "blur", message: "请输入您的账号" }],
+    password: [{ required: true, trigger: "blur", message: "请输入您的密码" }]
+  };
+  if (captchaEnabled.value) {
+    rules.code = [{ required: true, trigger: "change", message: "请输入验证码" }];
+  }
+  return rules;
+});
 
 const codeUrl = ref("");
 const loading = ref(false);
-// 验证码开关
-const captchaEnabled = ref(true);
+// 验证码开关（默认关闭，避免接口异常时仍展示验证码）
+const captchaEnabled = ref(false);
 // 注册开关
 const register = ref(false);
 const redirect = ref(undefined);
@@ -139,7 +144,7 @@ function handleLogin() {
 
 function getCode() {
   getCodeImg().then(res => {
-    captchaEnabled.value = res.captchaEnabled === undefined ? true : res.captchaEnabled;
+    captchaEnabled.value = res.captchaEnabled === true;
     if (captchaEnabled.value) {
       codeUrl.value = "data:image/gif;base64," + res.img;
       loginForm.value.uuid = res.uuid;
