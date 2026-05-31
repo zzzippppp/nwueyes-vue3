@@ -3,6 +3,9 @@
 </p>
 <h1 align="center" style="margin: 30px 0 30px; font-weight: bold;">RuoYi v3.8.7</h1>
 <h4 align="center">基于SpringBoot+Vue3前后端分离的Java快速开发框架</h4>
+
+> **nwueyes 项目**（门口识别 + 行为日志）完整启动说明 → [`../README.md`](../README.md) · 前端速览 → [`../RuoYi-Vue3/README.nwueyes.md`](../RuoYi-Vue3/README.nwueyes.md)
+
 <p align="center">
 	<a href="https://gitee.com/y_project/RuoYi-Vue/stargazers"><img src="https://gitee.com/y_project/RuoYi-Vue/badge/star.svg?theme=dark"></a>
 	<a href="https://gitee.com/y_project/RuoYi-Vue"><img src="https://img.shields.io/badge/RuoYi-v3.8.7-brightgreen.svg"></a>
