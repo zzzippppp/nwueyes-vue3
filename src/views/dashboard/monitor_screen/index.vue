@@ -61,8 +61,30 @@
             <el-form-item label="设备验证码">
               <el-input
                 v-model.trim="form.validCode"
-                placeholder="加密设备可选"
+                placeholder="视频加密开启时必填；已关加密可留空"
               />
+            </el-form-item>
+
+            <el-form-item label="识别拉流">
+              <el-radio-group v-model="form.streamMode">
+                <el-radio label="cloud_hls">公网云转发 (推荐)</el-radio>
+                <el-radio label="lan_rtsp">局域网 RTSP</el-radio>
+              </el-radio-group>
+              <div class="stream-mode-tip">
+                公网模式经萤石云 FLV 中转。局域网 RTSP 需先在 App 开启 RTSP 服务（见下方说明），且识别服务器与摄像头同网。
+              </div>
+              <el-alert
+                v-if="form.streamMode === 'lan_rtsp'"
+                type="info"
+                :closable="false"
+                show-icon
+                class="rtsp-help-alert"
+                title="萤石 App 开启 RTSP：我的 → 工具 → 局域网设备预览 → 扫描设备 → 进入设置 → 更多设置 → 本地服务 → 开启 RTSP → 保存"
+              />
+            </el-form-item>
+
+            <el-form-item label="识别状态">
+              <el-tag :type="recognizeStatusTagType" size="small">{{ recognizeStatusText }}</el-tag>
             </el-form-item>
 
             <el-form-item label="默认开声">
@@ -84,6 +106,25 @@
               </el-button>
               <el-button :disabled="!hasPlayer" @click="handleStop">
                 停止播放
+              </el-button>
+            </el-form-item>
+
+            <el-form-item class="action-row">
+              <el-button
+                type="success"
+                :loading="recognizeStarting"
+                :disabled="recognizeRunning || configLoading || !form.deviceSerial"
+                @click="handleStartRecognize"
+              >
+                开始识别
+              </el-button>
+              <el-button
+                type="warning"
+                :disabled="!recognizeTaskId"
+                :loading="recognizeStopping"
+                @click="handleStopRecognize"
+              >
+                停止识别
               </el-button>
             </el-form-item>
 
@@ -154,7 +195,16 @@
 
 <script setup name="MonitorScreen">
 import { useElementSize } from "@vueuse/core";
-import { getMonitorScreenConfig } from "@/api/monitor/screen";
+import {
+  getActiveLiveRecognize,
+  getMonitorScreenConfig,
+  getLiveRecognizeStatus,
+  startLiveRecognize,
+  stopLiveRecognize
+} from "@/api/monitor/screen";
+
+const STREAM_RTSP_LAN_REQUIRED = 4601;
+const STREAM_CODEC_NOT_H264 = 4602;
 
 const PLAYER_CONTAINER_ID = "ezviz-monitor-player";
 
@@ -176,8 +226,16 @@ const form = reactive({
   deviceSerial: "",
   channelNo: 1,
   validCode: "",
-  audioEnabled: false
+  audioEnabled: false,
+  streamMode: "cloud_hls"
 });
+
+const recognizeStarting = ref(false);
+const recognizeStopping = ref(false);
+const recognizeTaskId = ref("");
+const recognizeStatus = ref("idle");
+const recognizeMessage = ref("");
+let recognizePollTimer = null;
 
 const rules = {
   deviceSerial: [{ required: true, message: "请选择设备", trigger: "change" }],
@@ -254,6 +312,33 @@ const configStatusType = computed(() => {
     error: "danger"
   };
   return tagTypeMap[configState.value] || "info";
+});
+
+const recognizeRunning = computed(() => recognizeStatus.value === "running" || recognizeStatus.value === "starting");
+
+const recognizeStatusText = computed(() => {
+  const map = {
+    idle: "未启动",
+    starting: "启动中",
+    running: "识别中",
+    stopped: "已停止",
+    failed: "异常结束",
+    success: "已结束"
+  };
+  const base = map[recognizeStatus.value] || recognizeStatus.value;
+  return recognizeMessage.value ? `${base} · ${recognizeMessage.value}` : base;
+});
+
+const recognizeStatusTagType = computed(() => {
+  const map = {
+    idle: "info",
+    starting: "warning",
+    running: "success",
+    stopped: "info",
+    failed: "danger",
+    success: "info"
+  };
+  return map[recognizeStatus.value] || "info";
 });
 
 async function loadPlayerConstructor() {
@@ -430,6 +515,132 @@ async function handleStop() {
   await teardownPlayer();
 }
 
+function buildRecognizePayload() {
+  return {
+    deviceSerial: form.deviceSerial,
+    channelNo: form.channelNo,
+    validCode: form.validCode || undefined,
+    streamMode: form.streamMode,
+    locationId: 1
+  };
+}
+
+function clearRecognizePoll() {
+  if (recognizePollTimer) {
+    clearInterval(recognizePollTimer);
+    recognizePollTimer = null;
+  }
+}
+
+function applyRecognizeTask(task) {
+  if (!task) {
+    return;
+  }
+  recognizeStatus.value = task.status || "idle";
+  recognizeMessage.value = task.message || "";
+  if (task.taskId) {
+    recognizeTaskId.value = task.taskId;
+  }
+  if (task.deviceSerial) {
+    form.deviceSerial = task.deviceSerial;
+  }
+  if (task.streamMode) {
+    form.streamMode = task.streamMode;
+  }
+  if (["failed", "stopped", "success"].includes(recognizeStatus.value)) {
+    clearRecognizePoll();
+  }
+}
+
+async function restoreActiveRecognize() {
+  try {
+    const response = await getActiveLiveRecognize();
+    const task = response.data;
+    if (!task?.taskId) {
+      return;
+    }
+    applyRecognizeTask(task);
+    if (recognizeRunning.value) {
+      startRecognizePoll();
+    }
+  } catch (error) {
+    // 恢复失败不影响页面其它功能
+  }
+}
+
+async function pollRecognizeStatus() {
+  if (!recognizeTaskId.value) {
+    return;
+  }
+  try {
+    const response = await getLiveRecognizeStatus(recognizeTaskId.value);
+    applyRecognizeTask(response.data);
+  } catch (error) {
+    recognizeMessage.value = normalizeError(error);
+  }
+}
+
+function startRecognizePoll() {
+  clearRecognizePoll();
+  recognizePollTimer = setInterval(pollRecognizeStatus, 3000);
+}
+
+async function handleStartRecognize() {
+  const isValid = await configRef.value.validate().catch(() => false);
+  if (!isValid) {
+    return;
+  }
+  recognizeStarting.value = true;
+  recognizeMessage.value = "";
+  try {
+    const response = await startLiveRecognize(buildRecognizePayload());
+    applyRecognizeTask(response.data);
+    if (recognizeRunning.value) {
+      startRecognizePoll();
+      proxy.$modal.msgSuccess("直播识别已启动");
+    }
+  } catch (error) {
+    const code = error?.response?.data?.code;
+    const msg = error?.response?.data?.msg || normalizeError(error);
+    if (code === STREAM_RTSP_LAN_REQUIRED) {
+      await proxy.$modal.confirm(
+        "RTSP 需要识别服务器与摄像头在同一局域网。是否切换为「公网云转发」？",
+        "RTSP 连接失败",
+        { confirmButtonText: "切换公网云转发", cancelButtonText: "取消", type: "warning" }
+      ).then(() => {
+        form.streamMode = "cloud_hls";
+        proxy.$modal.msgInfo("已切换为公网云转发，请再次点击「开始识别」");
+      }).catch(() => {});
+    } else if (code === STREAM_CODEC_NOT_H264) {
+      proxy.$modal.msgError(`启动识别失败：${msg}`);
+      proxy.$modal.msgWarning("请在萤石 App 将摄像头视频编码改为 H264，或填写验证码后使用局域网 RTSP");
+    } else {
+      proxy.$modal.msgError(`启动识别失败：${msg}`);
+    }
+    recognizeStatus.value = "failed";
+    recognizeMessage.value = msg;
+  } finally {
+    recognizeStarting.value = false;
+  }
+}
+
+async function handleStopRecognize() {
+  if (!recognizeTaskId.value) {
+    return;
+  }
+  recognizeStopping.value = true;
+  try {
+    const response = await stopLiveRecognize(recognizeTaskId.value);
+    applyRecognizeTask(response.data);
+    clearRecognizePoll();
+    proxy.$modal.msgSuccess("直播识别已停止");
+  } catch (error) {
+    proxy.$modal.msgError(`停止识别失败：${normalizeError(error)}`);
+  } finally {
+    recognizeStopping.value = false;
+  }
+}
+
 async function handleOpenSound() {
   if (!playerRef.value || typeof playerRef.value.openSound !== "function") {
     proxy.$modal.msgWarning("当前播放器不支持开声操作");
@@ -456,11 +667,13 @@ async function handleCloseSound() {
   }
 }
 
-onMounted(() => {
-  fetchScreenConfig();
+onMounted(async () => {
+  await fetchScreenConfig();
+  await restoreActiveRecognize();
 });
 
 onBeforeUnmount(() => {
+  clearRecognizePoll();
   teardownPlayer("idle");
 });
 </script>
@@ -506,6 +719,13 @@ onBeforeUnmount(() => {
   .config-error {
     display: block;
     margin-top: 12px;
+  }
+
+  .stream-mode-tip {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    line-height: 1.5;
   }
 
   .player-shell {
