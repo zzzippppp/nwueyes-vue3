@@ -16,3 +16,19 @@ export function importBehaviorLogsFromVideo(data) {
     timeout: 60000
   })
 }
+
+export function listAiAnalysisModels() {
+  return request({
+    url: '/dashboard/behavior-log/analysis/models',
+    method: 'get'
+  })
+}
+
+export function runAiAnalysis(data) {
+  return request({
+    url: '/dashboard/behavior-log/analysis/run',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
