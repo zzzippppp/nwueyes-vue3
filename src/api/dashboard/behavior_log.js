@@ -16,3 +16,10 @@ export function importBehaviorLogsFromVideo(data) {
     timeout: 60000
   })
 }
+
+export function deleteBehaviorLog(id) {
+  return request({
+    url: `/dashboard/behavior-log/${id}`,
+    method: 'delete'
+  })
+}

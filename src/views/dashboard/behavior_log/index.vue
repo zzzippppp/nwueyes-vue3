@@ -70,13 +70,19 @@
           <span v-else>—</span>
         </template>
       </el-table-column>
+      <el-table-column label="操作" width="90" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="danger" @click="removeRow(row)">删除</el-button>
+        </template>
+      </el-table-column>
     </el-table>
   </div>
 </template>
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { listBehaviorLogs } from '@/api/dashboard/behavior_log'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { deleteBehaviorLog, listBehaviorLogs } from '@/api/dashboard/behavior_log'
 import { getDataBoardSummary } from '@/api/dashboard/data_board'
 
 const apiBase = import.meta.env.VITE_APP_BASE_API || ''
@@ -138,6 +144,16 @@ async function loadRows() {
   } finally {
     loading.value = false
   }
+}
+
+function removeRow(row) {
+  ElMessageBox.confirm('确认删除该行为日志吗？', '提示', { type: 'warning' })
+    .then(async () => {
+      await deleteBehaviorLog(row.id)
+      await loadRows()
+      ElMessage.success('删除成功')
+    })
+    .catch(() => {})
 }
 
 onMounted(async () => {
