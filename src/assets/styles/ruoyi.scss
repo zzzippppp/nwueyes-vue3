@@ -75,6 +75,10 @@
 }
 
 .el-table {
+	.el-table__header-wrapper {
+		overflow: hidden;
+	}
+
 	.el-table__header-wrapper, .el-table__fixed-header-wrapper {
 		th {
 			word-break: break-word;
@@ -102,15 +106,20 @@
 
 /** 表格布局 **/
 .pagination-container {
-    position: relative;
-    height: 25px;
-    margin-bottom: 10px;
-    margin-top: 15px;
-    padding: 10px 20px !important;
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 20px;
+    background-color: transparent !important;
 }
 
 .el-dialog .pagination-container {
     position: static !important;
+    margin: 10px 0 0 0;
+    padding: 0 !important;
+
+    .el-pagination {
+        position: static;
+    }
 }
 
 /* tree border */
@@ -123,8 +132,8 @@
 }
 
 .pagination-container .el-pagination {
-	right: 0;
-	position: absolute;
+	right: auto;
+	position: static;
 }
 
 @media ( max-width : 768px) {

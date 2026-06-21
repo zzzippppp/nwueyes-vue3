@@ -1,26 +1,40 @@
 <template>
-  <div class="app-container behavior-log-page">
-    <div class="toolbar">
-      <el-date-picker
-        v-model="statDate"
-        type="date"
-        value-format="YYYY-MM-DD"
-        placeholder="选择日期"
-        class="toolbar-control"
-        @change="loadRows"
-      />
-      <el-select v-model="locationId" clearable placeholder="全部点位" class="toolbar-control" @change="loadRows">
-        <el-option v-for="item in locationOptions" :key="item.locationId" :label="item.locationName" :value="item.locationId" />
-      </el-select>
-      <el-select v-model="eventType" clearable placeholder="全部行为" class="toolbar-control" @change="loadRows">
-        <el-option label="进门" value="enter" />
-        <el-option label="出门" value="exit" />
-      </el-select>
-      <el-button :loading="loading" @click="loadRows">刷新</el-button>
-      <el-button v-if="sceneFilter" type="warning" plain @click="clearSceneFilter">清除场景筛选</el-button>
-    </div>
+  <div class="app-container board-page behavior-log-page">
+    <el-form ref="queryRef" :inline="true" class="query-form">
+      <el-form-item label="统计日期" prop="dateRange">
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          clearable
+          style="width: 260px"
+        />
+      </el-form-item>
+      <el-form-item label="监控点位" prop="locationId">
+        <el-select v-model="locationId" clearable placeholder="全部点位" style="width: 200px">
+          <el-option v-for="item in locationOptions" :key="item.locationId" :label="item.locationName" :value="item.locationId" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="行为类型" prop="eventType">
+        <el-select v-model="eventType" clearable placeholder="全部行为" style="width: 200px">
+          <el-option label="进门" value="enter" />
+          <el-option label="出门" value="exit" />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" icon="Search" :loading="loading" @click="handleQuery">搜索</el-button>
+        <el-button icon="RefreshRight" :loading="loading" @click="handleRefresh">刷新</el-button>
+        <el-button icon="Refresh" @click="resetQuery">重置</el-button>
+      </el-form-item>
+      <el-form-item v-if="sceneFilter">
+        <el-button type="warning" plain @click="clearSceneFilter">清除场景筛选</el-button>
+      </el-form-item>
+    </el-form>
 
-    <el-table v-loading="loading" :data="rows" size="small" border stripe :height="tableHeight">
+    <el-table v-loading="loading" :data="rows" class="board-table">
       <el-table-column prop="id" label="ID" width="74" />
       <el-table-column prop="displayName" label="名称" min-width="140" />
       <el-table-column prop="eventType" label="行为" width="86">
@@ -61,30 +75,22 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="人脸" width="82">
+      <el-table-column label="监控画面" width="148">
         <template #default="{ row }">
           <el-image
-            v-if="row.faceImageUrl"
-            :src="resolveMediaUrl(row.faceImageUrl)"
-            :preview-src-list="previewList(row.faceImageUrl)"
+            v-if="row.snapshotUrl"
+            :src="resolveMediaUrl(row.snapshotUrl)"
+            :preview-src-list="previewList(row.snapshotUrl)"
             preview-teleported
             fit="cover"
-            class="thumb"
+            class="snapshot-thumb"
           />
           <span v-else class="muted">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="人体" width="82">
+      <el-table-column label="操作" width="90" align="center" fixed="right" class-name="small-padding fixed-width">
         <template #default="{ row }">
-          <el-image
-            v-if="row.bodyImageUrl"
-            :src="resolveMediaUrl(row.bodyImageUrl)"
-            :preview-src-list="previewList(row.bodyImageUrl)"
-            preview-teleported
-            fit="cover"
-            class="thumb"
-          />
-          <span v-else class="muted">-</span>
+          <el-button link type="danger" @click="removeRow(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -207,10 +213,11 @@
 
 <script setup>
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { listAiAnalysisModels, listBehaviorLogs, runAiAnalysis } from '@/api/dashboard/behavior_log'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { deleteBehaviorLog, listAiAnalysisModels, listBehaviorLogs, runAiAnalysis } from '@/api/dashboard/behavior_log'
 import { getDataBoardSummary } from '@/api/dashboard/data_board'
 import { getMonitorScreenConfig } from '@/api/monitor/screen'
+import { dateRangeParams, defaultDateRange } from '@/utils/statDateRange'
 
 const AnalysisList = defineComponent({
   name: 'AnalysisList',
@@ -247,11 +254,11 @@ const rows = ref([])
 const allRows = ref([])
 const modelOptions = ref([])
 const selectedModelKeys = ref([])
-const statDate = ref(defaultStatDate())
+const dateRange = ref(defaultDateRange())
 const locationId = ref(undefined)
 const eventType = ref(undefined)
 const locationOptions = ref([])
-const tableHeight = ref(620)
+const queryRef = ref()
 const previewVisible = ref(false)
 const currentRow = ref(null)
 const activeVideoTab = ref('person')
@@ -282,14 +289,6 @@ const activeClip = computed(() => {
   if (!currentRow.value) return null
   return activeVideoTab.value === 'scene' ? currentRow.value.sceneClip : currentRow.value.clip
 })
-
-function defaultStatDate() {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 function personKindText(kind) {
   if (kind === 'known') return '已知'
@@ -534,9 +533,12 @@ async function refreshCurrentRow() {
 }
 
 async function loadLocations() {
-  const res = await getDataBoardSummary({ statDate: statDate.value, recentLimit: 1 })
+  const res = await getDataBoardSummary({ ...dateRangeParams(dateRange.value), recentLimit: 1 })
   const data = res?.data || res || {}
-  locationOptions.value = data.locations || []
+  locationOptions.value = (data.byLocation || []).map(item => ({
+    locationId: item.locationId ?? item.cameraId,
+    locationName: item.locationName ?? item.deviceName
+  }))
 }
 
 async function loadModels() {
@@ -549,8 +551,8 @@ async function loadRows() {
   loading.value = true
   try {
     const res = await listBehaviorLogs({
-      statDate: statDate.value,
-      locationId: locationId.value,
+      ...dateRangeParams(dateRange.value),
+      cameraId: locationId.value,
       eventType: eventType.value
     })
     allRows.value = res?.data || res || []
@@ -558,6 +560,22 @@ async function loadRows() {
   } finally {
     loading.value = false
   }
+}
+
+function handleQuery() {
+  loadRows()
+}
+
+function handleRefresh() {
+  loadRows()
+}
+
+function resetQuery() {
+  dateRange.value = defaultDateRange()
+  locationId.value = undefined
+  eventType.value = undefined
+  sceneFilter.value = ''
+  loadRows()
 }
 
 watch(previewVisible, async (visible) => {
@@ -582,6 +600,16 @@ watch(currentRow, async () => {
   await setupEzvizPlayback()
 })
 
+function removeRow(row) {
+  ElMessageBox.confirm('确认删除该行为日志吗？', '提示', { type: 'warning' })
+    .then(async () => {
+      await deleteBehaviorLog(row.id)
+      await loadRows()
+      ElMessage.success('删除成功')
+    })
+    .catch(() => {})
+}
+
 onMounted(async () => {
   await Promise.all([loadLocations(), loadModels()])
   await loadRows()
@@ -593,19 +621,17 @@ onBeforeUnmount(async () => {
 </script>
 
 <style scoped lang="scss">
+@import '@/views/dashboard/shared/board-page.scss';
+
 .behavior-log-page {
   background: #f6f8fb;
   min-height: calc(100vh - 84px);
 
-  .toolbar {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    margin-bottom: 12px;
-  }
-
-  .toolbar-control {
-    width: 220px;
+  .snapshot-thumb {
+    width: 128px;
+    height: 72px;
+    border-radius: 4px;
+    background: #111827;
   }
 
   .thumb {

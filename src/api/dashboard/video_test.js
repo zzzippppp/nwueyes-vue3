@@ -42,3 +42,11 @@ export function embedAnalyzeCaptures(taskId) {
     timeout: 300000
   })
 }
+
+export function matchAnalyzeEvents(taskId) {
+  return request({
+    url: `/ingest/presence/analyze/match/${taskId}`,
+    method: 'post',
+    timeout: 600000
+  })
+}

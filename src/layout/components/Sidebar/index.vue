@@ -1,14 +1,15 @@
 <template>
   <div :class="{ 'has-logo': showLogo }" :style="{ backgroundColor: sideTheme === 'theme-dark' ? variables.menuBackground : variables.menuLightBackground }">
     <logo v-if="showLogo" :collapse="isCollapse" />
-    <el-scrollbar :class="sideTheme" wrap-class="scrollbar-wrapper">
+    <el-scrollbar :class="[sideTheme, 'sidebar-scrollbar']" wrap-class="scrollbar-wrapper">
       <el-menu
+        class="sidebar-menu"
         :default-active="activeMenu"
         :collapse="isCollapse"
         :background-color="sideTheme === 'theme-dark' ? variables.menuBackground : variables.menuLightBackground"
         :text-color="sideTheme === 'theme-dark' ? variables.menuColor : variables.menuLightColor"
         :unique-opened="true"
-        :active-text-color="theme"
+        :active-text-color="activeTextColor"
         :collapse-transition="false"
         mode="vertical"
       >
@@ -40,6 +41,12 @@ const sidebarRouters =  computed(() => permissionStore.sidebarRouters);
 const showLogo = computed(() => settingsStore.sidebarLogo);
 const sideTheme = computed(() => settingsStore.sideTheme);
 const theme = computed(() => settingsStore.theme);
+const activeTextColor = computed(() => {
+  if (sideTheme.value === 'theme-light') {
+    return variables.menuLightActiveColor || '#1890ff'
+  }
+  return theme.value
+});
 const isCollapse = computed(() => !appStore.sidebar.opened);
 
 const activeMenu = computed(() => {

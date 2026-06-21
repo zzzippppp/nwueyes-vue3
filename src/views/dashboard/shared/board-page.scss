@@ -1,0 +1,123 @@
+.board-page {
+  font-size: 15px;
+
+  .query-form {
+    margin-bottom: 16px;
+    padding: 18px 20px 2px;
+    background: #fff;
+    border: 1px solid #ebeef5;
+    border-radius: 10px;
+    box-shadow: 0 1px 8px rgba(0, 0, 0, 0.04);
+  }
+
+  .query-form :deep(.el-form-item) {
+    margin-bottom: 16px;
+  }
+
+  .query-form :deep(.el-form-item__label) {
+    font-size: 15px;
+    font-weight: 600;
+    color: #4b5563;
+  }
+
+  .toolbar {
+    margin-bottom: 16px;
+  }
+  .toolbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .tabs-wrap,
+  .table-wrap {
+    margin-top: 12px;
+    padding: 18px;
+    background: #fff;
+    border: 1px solid #ebeef5;
+    border-radius: 10px;
+    box-shadow: 0 1px 8px rgba(0, 0, 0, 0.04);
+
+    :deep(.el-tabs__item) {
+      font-size: 15px;
+      height: 44px;
+      line-height: 44px;
+      transition: color 0.2s ease;
+    }
+
+    :deep(.el-tabs__item.is-active) {
+      font-weight: 600;
+    }
+  }
+  .tab-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .board-table {
+    width: 100%;
+  }
+
+  /* 与 system/post 岗位管理表格一致：默认尺寸、无斑马纹/边框、内容居中 */
+  :deep(.board-table.el-table) {
+    font-size: 15px;
+
+    .el-table__header-wrapper th,
+    .el-table__fixed-header-wrapper th {
+      text-align: center;
+      font-size: 15px;
+      padding: 14px 0;
+    }
+
+    .el-table__body-wrapper td {
+      text-align: center;
+      padding: 12px 0;
+    }
+  }
+  .stat-card {
+    height: 92px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    .stat-label {
+      color: #909399;
+      font-size: 13px;
+    }
+    .stat-value {
+      margin-top: 8px;
+      font-size: 24px;
+      font-weight: 600;
+      color: #303133;
+      line-height: 1;
+    }
+  }
+  .thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 4px;
+    border: 1px solid #ebeef5;
+  }
+  .thumb-preview {
+    :deep(.el-image__inner) {
+      cursor: zoom-in;
+    }
+  }
+  .upload-preview {
+    margin-top: 10px;
+    width: 80px;
+    height: 80px;
+  }
+  @media (max-width: 1200px) {
+    .stat-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+}

@@ -12,7 +12,7 @@ export function startLiveRecognize(data) {
     url: "/monitor/screen/live/start",
     method: "post",
     data,
-    timeout: 90000
+    timeout: 30000
   });
 }
 

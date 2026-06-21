@@ -1,7 +1,7 @@
 <template>
   <div class="login">
     <el-form ref="loginRef" :model="loginForm" :rules="loginRules" class="login-form">
-      <h3 class="title">若依后台管理系统</h3>
+      <h3 class="title">无感知考勤平台</h3>
       <el-form-item prop="username">
         <el-input
           v-model="loginForm.username"
@@ -59,7 +59,7 @@
     </el-form>
     <!--  底部  -->
     <div class="el-login-footer">
-      <span>Copyright © 2018-2023 ruoyi.vip All Rights Reserved.</span>
+      <span>Copyright © 2026 ANISC工程研究中心 All Rights Reserved.</span>
     </div>
   </div>
 </template>
@@ -173,13 +173,18 @@ getCookie();
   justify-content: center;
   align-items: center;
   height: 100%;
-  background-image: url("../assets/images/login-background.jpg");
+  background-image: url("@/assets/images/backgrounds/bgp.jpg");
   background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 .title {
-  margin: 0px auto 30px auto;
+  margin: 0px auto 24px auto;
   text-align: center;
-  color: #707070;
+  color: #303133;
+  font-size: 18px;
+  line-height: 1.5;
+  font-weight: 600;
 }
 
 .login-form {

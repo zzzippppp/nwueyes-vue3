@@ -6,16 +6,6 @@
 
     <div class="right-menu">
       <template v-if="appStore.device !== 'mobile'">
-        <header-search id="header-search" class="right-menu-item" />
-
-        <el-tooltip content="源码地址" effect="dark" placement="bottom">
-          <ruo-yi-git id="ruoyi-git" class="right-menu-item hover-effect" />
-        </el-tooltip>
-
-        <el-tooltip content="文档地址" effect="dark" placement="bottom">
-          <ruo-yi-doc id="ruoyi-doc" class="right-menu-item hover-effect" />
-        </el-tooltip>
-
         <screenfull id="screenfull" class="right-menu-item hover-effect" />
 
         <el-tooltip content="布局大小" effect="dark" placement="bottom">
@@ -54,9 +44,6 @@ import TopNav from '@/components/TopNav'
 import Hamburger from '@/components/Hamburger'
 import Screenfull from '@/components/Screenfull'
 import SizeSelect from '@/components/SizeSelect'
-import HeaderSearch from '@/components/HeaderSearch'
-import RuoYiGit from '@/components/RuoYi/Git'
-import RuoYiDoc from '@/components/RuoYi/Doc'
 import useAppStore from '@/store/modules/app'
 import useUserStore from '@/store/modules/user'
 import useSettingsStore from '@/store/modules/settings'
@@ -106,7 +93,8 @@ function setLayout() {
   overflow: hidden;
   position: relative;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+  border-bottom: 1px solid #ebeef5;
+  box-shadow: none;
 
   .hamburger-container {
     line-height: 46px;
@@ -115,6 +103,7 @@ function setLayout() {
     cursor: pointer;
     transition: background 0.3s;
     -webkit-tap-highlight-color: transparent;
+    padding: 0 4px 0 12px;
 
     &:hover {
       background: rgba(0, 0, 0, 0.025);
@@ -140,18 +129,20 @@ function setLayout() {
     height: 100%;
     line-height: 50px;
     display: flex;
+    align-items: center;
 
     &:focus {
       outline: none;
     }
 
     .right-menu-item {
-      display: inline-block;
-      padding: 0 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 10px;
       height: 100%;
-      font-size: 18px;
-      color: #5a5e66;
-      vertical-align: text-bottom;
+      font-size: 17px;
+      color: #606266;
 
       &.hover-effect {
         cursor: pointer;
@@ -164,25 +155,46 @@ function setLayout() {
     }
 
     .avatar-container {
-      margin-right: 40px;
+      margin-right: 20px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+
+      :deep(.el-dropdown) {
+        height: 100%;
+        display: flex;
+        align-items: center;
+      }
 
       .avatar-wrapper {
-        margin-top: 5px;
-        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        line-height: 0;
 
         .user-avatar {
           cursor: pointer;
-          width: 40px;
-          height: 40px;
-          border-radius: 10px;
+          display: block;
+          width: 50px;
+          height: 50px;
+          border-radius: 50%;
+          object-fit: cover;
         }
 
-        i {
+        .el-icon {
           cursor: pointer;
-          position: absolute;
-          right: -20px;
-          top: 25px;
           font-size: 12px;
+          color: #909399;
+          line-height: 1;
+
+          :deep(svg) {
+            stroke: currentColor;
+            stroke-width: 28;
+          }
+        }
+
+        &:hover .el-icon {
+          color: #606266;
         }
       }
     }
