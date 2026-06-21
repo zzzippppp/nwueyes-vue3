@@ -14,9 +14,10 @@ $base-menu-color-active: #f4f4f5;
 $base-menu-background: #304156;
 $base-logo-title-color: #ffffff;
 
-$base-menu-light-color: rgba(0, 0, 0, 0.7);
+$base-menu-light-color: #333333;
 $base-menu-light-background: #ffffff;
-$base-logo-light-title-color: #001529;
+$base-logo-light-title-color: #1f2937;
+$base-menu-light-active-color: #1890ff;
 
 $base-sub-menu-background: #1f2d3d;
 $base-sub-menu-hover: #001528;
@@ -57,6 +58,7 @@ $base-sidebar-width: 200px;
   sideBarWidth: $base-sidebar-width;
   logoTitleColor: $base-logo-title-color;
   logoLightTitleColor: $base-logo-light-title-color;
+  menuLightActiveColor: $base-menu-light-active-color;
   primaryColor: $--color-primary;
   successColor: $--color-success;
   dangerColor: $--color-danger;

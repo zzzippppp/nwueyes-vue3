@@ -1,14 +1,32 @@
-﻿<template>
-  <div class="app-container data-board-page">
-    <el-row :gutter="12" class="toolbar">
-      <el-col :span="8">
-        <el-select v-model="locationId" clearable placeholder="全部地点" style="width: 100%" @change="loadSummary">
+<template>
+  <div class="app-container board-page data-board-page">
+    <el-form ref="queryRef" :inline="true" class="query-form">
+      <el-form-item label="统计日期" prop="dateRange">
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          clearable
+          style="width: 260px"
+        />
+      </el-form-item>
+      <el-form-item label="监控地点" prop="locationId">
+        <el-select v-model="locationId" clearable placeholder="全部地点" style="width: 200px">
           <el-option v-for="item in locationOptions" :key="item.locationId" :label="item.locationName" :value="item.locationId" />
         </el-select>
-      </el-col>
-      <el-col :span="16" class="toolbar-actions">
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" icon="Search" :loading="loading" @click="handleQuery">搜索</el-button>
+        <el-button icon="Refresh" @click="resetQuery">重置</el-button>
+      </el-form-item>
+    </el-form>
+
+    <el-row class="mb8">
+      <el-col>
         <el-tag type="info" size="small">每 30 秒自动刷新</el-tag>
-        <el-button :loading="loading" @click="loadSummary">刷新</el-button>
       </el-col>
     </el-row>
 
@@ -21,17 +39,7 @@
 
     <el-tabs v-model="activeTab" class="tabs-wrap">
       <el-tab-pane :label="`停留记录(${sessionRows.length})`" name="session">
-        <div class="tab-actions">
-          <el-date-picker
-            v-model="statDate"
-            type="date"
-            value-format="YYYY-MM-DD"
-            placeholder="统计日期"
-            style="width: 180px"
-            @change="loadSummary"
-          />
-        </div>
-        <el-table v-loading="loading" :data="sessionRows" size="small" :height="tableHeight" class="board-table">
+        <el-table v-loading="loading" :data="sessionRows" class="board-table">
           <el-table-column prop="sessionId" label="ID" min-width="70" />
           <el-table-column prop="locationName" label="地点" min-width="120" />
           <el-table-column prop="displayName" label="人员" min-width="140" />
@@ -65,7 +73,7 @@
               <span v-else>—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="170" fixed="right">
+          <el-table-column label="操作" width="170" align="center" fixed="right" class-name="small-padding fixed-width">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit('session', row)">编辑</el-button>
               <el-button link type="danger" @click="removeRow('session', row)">删除</el-button>
@@ -78,7 +86,7 @@
         <div class="tab-actions">
           <el-button type="primary" @click="openUploadDialog">上传人脸</el-button>
         </div>
-        <el-table v-loading="loading" :data="personRows" size="small" :height="tableHeight" class="board-table">
+        <el-table v-loading="loading" :data="personRows" class="board-table">
           <el-table-column prop="personId" label="ID" min-width="70" />
           <el-table-column prop="displayName" label="当前名称" min-width="160" />
           <el-table-column prop="personKind" label="类型" min-width="90">
@@ -115,7 +123,7 @@
             </template>
           </el-table-column>
           <el-table-column prop="lastSeenAt" label="最后出现时间" min-width="170" />
-          <el-table-column label="操作" width="170" fixed="right">
+          <el-table-column label="操作" width="170" align="center" fixed="right" class-name="small-padding fixed-width">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit('person', row)">编辑</el-button>
               <el-button link type="danger" @click="removeRow('person', row)">删除</el-button>
@@ -125,7 +133,7 @@
       </el-tab-pane>
 
       <el-tab-pane :label="`陌生人研判(${strangerRows.length})`" name="stranger">
-        <el-table v-loading="loading" :data="strangerRows" size="small" :height="tableHeight" class="board-table">
+        <el-table v-loading="loading" :data="strangerRows" class="board-table">
           <el-table-column prop="trackKey" label="轨迹ID" min-width="220" />
           <el-table-column prop="displayName" label="当前名称" min-width="180" />
           <el-table-column label="身份" min-width="100">
@@ -145,7 +153,7 @@
               <span v-else>—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="210" fixed="right">
+          <el-table-column label="操作" width="210" align="center" fixed="right" class-name="small-padding fixed-width">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit('stranger', row)">编辑</el-button>
               <el-button link type="danger" @click="removeRow('stranger', row)">删除</el-button>
@@ -155,11 +163,11 @@
       </el-tab-pane>
 
       <el-tab-pane :label="`监控信息(${locationRows.length})`" name="location">
-        <el-table v-loading="loading" :data="locationRows" size="small" :height="tableHeight" class="board-table">
+        <el-table v-loading="loading" :data="locationRows" class="board-table">
           <el-table-column prop="locationName" label="监控位置名" min-width="260" />
           <el-table-column prop="deviceSerial" label="设备号" min-width="180" />
           <el-table-column prop="channelNo" label="通道" min-width="100" />
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="90" align="center" fixed="right" class-name="small-padding fixed-width">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit('location', row)">编辑</el-button>
             </template>
@@ -251,13 +259,14 @@ import {
   updateDataBoardStranger,
   uploadDataBoardFace
 } from '@/api/dashboard/data_board'
+import { dateRangeParams, defaultDateRange } from '@/utils/statDateRange'
 
 const loading = ref(false)
-const statDate = ref('')
+const queryRef = ref()
+const dateRange = ref(defaultDateRange())
 const locationId = ref()
 const summary = ref({})
 const activeTab = ref('session')
-const tableHeight = ref(420)
 const sessionRows = ref([])
 const personRows = ref([])
 const strangerRows = ref([])
@@ -281,14 +290,10 @@ const uploadRules = {
 }
 let pollTimer = null
 
-function updateTableHeight() {
-  tableHeight.value = Math.max(360, window.innerHeight - 320)
-}
-
 const locationOptions = computed(() => {
   return (summary.value.byLocation || []).map(item => ({
-    locationId: item.locationId,
-    locationName: item.locationName
+    locationId: item.locationId ?? item.cameraId,
+    locationName: item.locationName ?? item.deviceName
   }))
 })
 
@@ -353,8 +358,13 @@ async function saveEdit() {
         identityType: editForm.identityType
       })
     } else if (editMode.value === 'location') {
-      await updateDataBoardLocation(editForm.locationId, {
-        locationName: editForm.locationName
+      const cameraId = editForm.cameraId ?? editForm.locationId
+      if (!cameraId) {
+        ElMessage.error('设备 ID 缺失，无法保存')
+        return
+      }
+      await updateDataBoardLocation(cameraId, {
+        deviceName: (editForm.deviceName ?? editForm.locationName ?? '').trim()
       })
     }
     await loadSummary()
@@ -451,19 +461,11 @@ function previewList(rawUrl) {
   return url ? [url] : []
 }
 
-function defaultStatDate() {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
 function loadSummary() {
   loading.value = true
   getDataBoardSummary({
-    statDate: statDate.value || defaultStatDate(),
-    locationId: locationId.value,
+    ...dateRangeParams(dateRange.value),
+    cameraId: locationId.value,
     recentLimit: 20
   }).then(res => {
     const data = res.data || {}
@@ -475,25 +477,38 @@ function loadSummary() {
       ...item,
       identityType: item.identityType || 'stranger'
     }))
-    locationRows.value = data.byLocation || []
-    if (!statDate.value && summary.value.statDate) {
-      statDate.value = summary.value.statDate
+    locationRows.value = (data.byLocation || []).map(item => {
+      const cameraId = item.cameraId ?? item.locationId
+      const deviceName = item.deviceName ?? item.locationName ?? ''
+      return { ...item, cameraId, locationId: cameraId, deviceName, locationName: deviceName }
+    })
+    if ((!dateRange.value || !dateRange.value[0]) && (data.beginDate || data.statDate)) {
+      const begin = data.beginDate || data.statDate
+      const end = data.endDate || begin
+      dateRange.value = [begin, end]
     }
   }).finally(() => {
     loading.value = false
   })
 }
 
+function handleQuery() {
+  loadSummary()
+}
+
+function resetQuery() {
+  dateRange.value = defaultDateRange()
+  locationId.value = undefined
+  loadSummary()
+}
+
 onMounted(() => {
-  statDate.value = defaultStatDate()
-  updateTableHeight()
-  window.addEventListener('resize', updateTableHeight)
+  dateRange.value = defaultDateRange()
   loadSummary()
   pollTimer = window.setInterval(loadSummary, 30000)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', updateTableHeight)
   if (pollTimer) {
     clearInterval(pollTimer)
   }
@@ -501,6 +516,8 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="scss">
+@import '@/views/dashboard/shared/board-page.scss';
+
 .data-board-page {
   .toolbar {
     margin-bottom: 16px;
@@ -529,25 +546,47 @@ onUnmounted(() => {
     gap: 10px;
     margin-bottom: 10px;
   }
-  .board-table {
-    width: 100%;
-  }
   .stat-card {
-    height: 92px;
+    position: relative;
+    height: 96px;
     display: flex;
     flex-direction: column;
     justify-content: center;
+    overflow: hidden;
+    border-radius: 10px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    :deep(.el-card__body) {
+      padding-left: 26px;
+    }
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 5px;
+      background: var(--accent, #409eff);
+    }
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    }
     .stat-label {
       color: #909399;
       font-size: 13px;
     }
     .stat-value {
       margin-top: 8px;
-      font-size: 24px;
-      font-weight: 600;
-      color: #303133;
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--accent, #303133);
       line-height: 1;
     }
+    &:nth-child(1) { --accent: #409eff; }
+    &:nth-child(2) { --accent: #f56c6c; }
+    &:nth-child(3) { --accent: #67c23a; }
+    &:nth-child(4) { --accent: #e6a23c; }
+    &:nth-child(5) { --accent: #909399; }
   }
   .thumb {
     width: 34px;

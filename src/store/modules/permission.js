@@ -8,6 +8,43 @@ import InnerLink from '@/layout/components/InnerLink'
 // 匹配views里面所有的.vue文件
 const modules = import.meta.glob('./../../views/**/*.vue')
 
+const HIDDEN_MENU_TITLES = new Set([
+  '系统监控',
+  '系统工具',
+  '若依官网'
+])
+
+const HIDDEN_MENU_PATH_KEYWORDS = [
+  '/monitor',
+  '/tool',
+  'ruoyi.vip'
+]
+
+function isHiddenMenu(route) {
+  const title = route.meta?.title || route.name || ''
+  if (HIDDEN_MENU_TITLES.has(title)) {
+    return true
+  }
+  const path = `${route.path || ''}`
+  return HIDDEN_MENU_PATH_KEYWORDS.some(keyword => path.includes(keyword))
+}
+
+function filterHiddenMenus(routes) {
+  if (!Array.isArray(routes)) {
+    return []
+  }
+  return routes
+    .filter(route => !isHiddenMenu(route))
+    .map(route => {
+      const next = { ...route }
+      if (next.children && next.children.length) {
+        next.children = filterHiddenMenus(next.children)
+      }
+      return next
+    })
+    .filter(route => !route.children || route.children.length > 0 || route.component)
+}
+
 const usePermissionStore = defineStore(
   'permission',
   {
@@ -36,9 +73,9 @@ const usePermissionStore = defineStore(
         return new Promise(resolve => {
           // 向后端请求路由数据
           getRouters().then(res => {
-            const sdata = JSON.parse(JSON.stringify(res.data))
-            const rdata = JSON.parse(JSON.stringify(res.data))
-            const defaultData = JSON.parse(JSON.stringify(res.data))
+            const sdata = filterHiddenMenus(JSON.parse(JSON.stringify(res.data)))
+            const rdata = filterHiddenMenus(JSON.parse(JSON.stringify(res.data)))
+            const defaultData = filterHiddenMenus(JSON.parse(JSON.stringify(res.data)))
             const sidebarRoutes = filterAsyncRouter(sdata)
             const rewriteRoutes = filterAsyncRouter(rdata, false, true)
             const defaultRoutes = filterAsyncRouter(defaultData)

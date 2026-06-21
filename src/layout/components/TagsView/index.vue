@@ -243,45 +243,40 @@ function handleScroll() {
 
 <style lang='scss' scoped>
 .tags-view-container {
-  height: 34px;
+  height: 40px;
   width: 100%;
   background: #fff;
-  border-bottom: 1px solid #d8dce5;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.12), 0 0 3px 0 rgba(0, 0, 0, 0.04);
+  border-bottom: 1px solid #ebeef5;
+  box-shadow: none;
+
   .tags-view-wrapper {
     .tags-view-item {
       display: inline-block;
       position: relative;
       cursor: pointer;
-      height: 26px;
-      line-height: 26px;
-      border: 1px solid #d8dce5;
-      color: #495060;
-      background: #fff;
-      padding: 0 8px;
-      font-size: 12px;
-      margin-left: 5px;
-      margin-top: 4px;
+      height: 28px;
+      line-height: 28px;
+      border: none;
+      color: #606266;
+      background: #f4f4f5;
+      padding: 0 12px;
+      font-size: 13px;
+      border-radius: 4px;
+      margin-left: 6px;
+      margin-top: 6px;
+
       &:first-of-type {
-        margin-left: 15px;
+        margin-left: 12px;
       }
+
       &:last-of-type {
-        margin-right: 15px;
+        margin-right: 12px;
       }
+
       &.active {
-        background-color: #42b983;
+        background-color: #1890ff;
         color: #fff;
-        border-color: #42b983;
-        &::before {
-          content: "";
-          background: #fff;
-          display: inline-block;
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          position: relative;
-          margin-right: 5px;
-        }
+        border-color: #1890ff;
       }
     }
   }
@@ -293,7 +288,7 @@ function handleScroll() {
     list-style-type: none;
     padding: 5px 0;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 400;
     color: #333;
     box-shadow: 2px 2px 3px 0 rgba(0, 0, 0, 0.3);
@@ -314,12 +309,12 @@ function handleScroll() {
 .tags-view-wrapper {
   .tags-view-item {
     .el-icon-close {
-      width: 16px;
-      height: 16px;
-      vertical-align: 2px;
+      width: 14px;
+      height: 14px;
+      vertical-align: -2px;
       border-radius: 50%;
       text-align: center;
-      transition: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
+      transition: all 0.2s ease;
       transform-origin: 100% 50%;
       &:before {
         transform: scale(0.6);
@@ -327,10 +322,19 @@ function handleScroll() {
         vertical-align: -3px;
       }
       &:hover {
-        background-color: #b4bccc;
+        background-color: rgba(0, 0, 0, 0.15);
+        color: inherit;
+        width: 14px !important;
+        height: 14px !important;
+      }
+    }
+
+    &.active .el-icon-close {
+      color: #fff;
+
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.25);
         color: #fff;
-        width: 12px !important;
-        height: 12px !important;
       }
     }
   }

@@ -5,7 +5,10 @@
         <el-card class="config-card" shadow="never">
           <template #header>
             <div class="card-header">
-              <span>播放配置</span>
+              <span class="card-title">
+                <svg-icon icon-class="monitor" class="card-icon" />
+                播放配置
+              </span>
               <el-tag size="small" type="info">后端自动取配置</el-tag>
             </div>
           </template>
@@ -71,7 +74,7 @@
                 <el-radio label="lan_rtsp">局域网 RTSP</el-radio>
               </el-radio-group>
               <div class="stream-mode-tip">
-                公网模式经萤石云 FLV 中转。局域网 RTSP 需先在 App 开启 RTSP 服务（见下方说明），且识别服务器与摄像头同网。
+                公网模式经萤石云 HLS 中转（主码流）。若识别服务器与摄像头同网，优先选「局域网 RTSP」。
               </div>
               <el-alert
                 v-if="form.streamMode === 'lan_rtsp'"
@@ -86,6 +89,20 @@
             <el-form-item label="识别状态">
               <el-tag :type="recognizeStatusTagType" size="small">{{ recognizeStatusText }}</el-tag>
             </el-form-item>
+
+            <el-alert
+              v-if="recognizeStatus === 'failed' && recognizeMessage"
+              type="error"
+              :closable="true"
+              show-icon
+              class="recognize-fail-alert"
+              :title="recognizeMessage"
+            >
+              <template v-if="recognizeLogTailPreview" #default>
+                <div class="log-tail-label">日志摘要（可在 Network → live/status 查看完整 logTail）：</div>
+                <pre class="log-tail-preview">{{ recognizeLogTailPreview }}</pre>
+              </template>
+            </el-alert>
 
             <el-form-item label="默认开声">
               <el-switch v-model="form.audioEnabled" />
@@ -196,15 +213,14 @@
 <script setup name="MonitorScreen">
 import { useElementSize } from "@vueuse/core";
 import {
-  getActiveLiveRecognize,
-  getMonitorScreenConfig,
-  getLiveRecognizeStatus,
-  startLiveRecognize,
-  stopLiveRecognize
+  getMonitorScreenConfig
 } from "@/api/monitor/screen";
+import useLiveRecognizeStore from "@/store/modules/liveRecognize";
 
 const STREAM_RTSP_LAN_REQUIRED = 4601;
 const STREAM_CODEC_NOT_H264 = 4602;
+
+const liveStore = useLiveRecognizeStore();
 
 const PLAYER_CONTAINER_ID = "ezviz-monitor-player";
 
@@ -230,12 +246,20 @@ const form = reactive({
   streamMode: "cloud_hls"
 });
 
-const recognizeStarting = ref(false);
-const recognizeStopping = ref(false);
-const recognizeTaskId = ref("");
-const recognizeStatus = ref("idle");
-const recognizeMessage = ref("");
-let recognizePollTimer = null;
+const recognizeStarting = computed(() => liveStore.starting);
+const recognizeStopping = computed(() => liveStore.stopping);
+const recognizeTaskId = computed(() => liveStore.taskId);
+const recognizeStatus = computed(() => liveStore.status);
+const recognizeMessage = computed(() => liveStore.message);
+const recognizeLogTail = computed(() => liveStore.logTail || '');
+const recognizeLogTailPreview = computed(() => {
+  const tail = recognizeLogTail.value.trim();
+  if (!tail) {
+    return '';
+  }
+  const lines = tail.split('\n').filter(Boolean);
+  return lines.slice(-8).join('\n');
+});
 
 const rules = {
   deviceSerial: [{ required: true, message: "请选择设备", trigger: "change" }],
@@ -406,8 +430,9 @@ function applyScreenConfig(data) {
 }
 
 async function fetchScreenConfig(showMessage = false) {
+  const hadConfig = Boolean(accessToken.value);
   configLoading.value = true;
-  configState.value = "loading";
+  configState.value = hadConfig ? "ready" : "loading";
   configError.value = "";
 
   try {
@@ -418,10 +443,14 @@ async function fetchScreenConfig(showMessage = false) {
       proxy.$modal.msgSuccess("播放配置已刷新");
     }
   } catch (error) {
-    accessToken.value = "";
-    deviceOptions.value = [];
-    configState.value = "error";
     configError.value = normalizeError(error);
+    if (!hadConfig) {
+      accessToken.value = "";
+      deviceOptions.value = [];
+      configState.value = "error";
+    } else {
+      configState.value = "ready";
+    }
     if (showMessage) {
       proxy.$modal.msgError(`刷新配置失败：${configError.value}`);
     }
@@ -515,74 +544,13 @@ async function handleStop() {
   await teardownPlayer();
 }
 
-function buildRecognizePayload() {
-  return {
-    deviceSerial: form.deviceSerial,
-    channelNo: form.channelNo,
-    validCode: form.validCode || undefined,
-    streamMode: form.streamMode,
-    locationId: 1
-  };
-}
-
-function clearRecognizePoll() {
-  if (recognizePollTimer) {
-    clearInterval(recognizePollTimer);
-    recognizePollTimer = null;
+function syncFormFromLiveStore() {
+  if (liveStore.deviceSerial) {
+    form.deviceSerial = liveStore.deviceSerial;
   }
-}
-
-function applyRecognizeTask(task) {
-  if (!task) {
-    return;
+  if (liveStore.streamMode) {
+    form.streamMode = liveStore.streamMode;
   }
-  recognizeStatus.value = task.status || "idle";
-  recognizeMessage.value = task.message || "";
-  if (task.taskId) {
-    recognizeTaskId.value = task.taskId;
-  }
-  if (task.deviceSerial) {
-    form.deviceSerial = task.deviceSerial;
-  }
-  if (task.streamMode) {
-    form.streamMode = task.streamMode;
-  }
-  if (["failed", "stopped", "success"].includes(recognizeStatus.value)) {
-    clearRecognizePoll();
-  }
-}
-
-async function restoreActiveRecognize() {
-  try {
-    const response = await getActiveLiveRecognize();
-    const task = response.data;
-    if (!task?.taskId) {
-      return;
-    }
-    applyRecognizeTask(task);
-    if (recognizeRunning.value) {
-      startRecognizePoll();
-    }
-  } catch (error) {
-    // 恢复失败不影响页面其它功能
-  }
-}
-
-async function pollRecognizeStatus() {
-  if (!recognizeTaskId.value) {
-    return;
-  }
-  try {
-    const response = await getLiveRecognizeStatus(recognizeTaskId.value);
-    applyRecognizeTask(response.data);
-  } catch (error) {
-    recognizeMessage.value = normalizeError(error);
-  }
-}
-
-function startRecognizePoll() {
-  clearRecognizePoll();
-  recognizePollTimer = setInterval(pollRecognizeStatus, 3000);
 }
 
 async function handleStartRecognize() {
@@ -590,18 +558,35 @@ async function handleStartRecognize() {
   if (!isValid) {
     return;
   }
-  recognizeStarting.value = true;
-  recognizeMessage.value = "";
   try {
-    const response = await startLiveRecognize(buildRecognizePayload());
-    applyRecognizeTask(response.data);
-    if (recognizeRunning.value) {
-      startRecognizePoll();
+    const task = await liveStore.startRecognize({
+      deviceSerial: form.deviceSerial,
+      channelNo: form.channelNo,
+      validCode: form.validCode || undefined,
+      streamMode: form.streamMode,
+      locationId: 1
+    });
+    syncFormFromLiveStore();
+    if (liveStore.status === "running") {
       proxy.$modal.msgSuccess("直播识别已启动");
+    } else if (liveStore.status === "starting") {
+      proxy.$modal.msgSuccess("正在连接直播流，请稍候…");
+    }
+    if (task?.status === "failed" && task?.message) {
+      proxy.$modal.msgError(`直播识别失败：${task.message}`);
     }
   } catch (error) {
     const code = error?.response?.data?.code;
     const msg = error?.response?.data?.msg || normalizeError(error);
+    if (!code && /timeout/i.test(msg)) {
+      await liveStore.syncFromServer();
+      if (liveStore.active) {
+        liveStore.startPoll();
+        syncFormFromLiveStore();
+        proxy.$modal.msgWarning("连接较慢，已在后台继续尝试打开直播流…");
+        return;
+      }
+    }
     if (code === STREAM_RTSP_LAN_REQUIRED) {
       await proxy.$modal.confirm(
         "RTSP 需要识别服务器与摄像头在同一局域网。是否切换为「公网云转发」？",
@@ -617,10 +602,8 @@ async function handleStartRecognize() {
     } else {
       proxy.$modal.msgError(`启动识别失败：${msg}`);
     }
-    recognizeStatus.value = "failed";
-    recognizeMessage.value = msg;
-  } finally {
-    recognizeStarting.value = false;
+    liveStore.$patch({ status: 'failed', message: msg });
+    liveStore.persist();
   }
 }
 
@@ -628,16 +611,11 @@ async function handleStopRecognize() {
   if (!recognizeTaskId.value) {
     return;
   }
-  recognizeStopping.value = true;
   try {
-    const response = await stopLiveRecognize(recognizeTaskId.value);
-    applyRecognizeTask(response.data);
-    clearRecognizePoll();
+    await liveStore.stopRecognize();
     proxy.$modal.msgSuccess("直播识别已停止");
   } catch (error) {
     proxy.$modal.msgError(`停止识别失败：${normalizeError(error)}`);
-  } finally {
-    recognizeStopping.value = false;
   }
 }
 
@@ -668,12 +646,19 @@ async function handleCloseSound() {
 }
 
 onMounted(async () => {
+  await liveStore.bootstrap();
+  syncFormFromLiveStore();
   await fetchScreenConfig();
-  await restoreActiveRecognize();
+});
+
+watch(recognizeStatus, (status, prev) => {
+  if (status === 'failed' && prev !== 'failed' && recognizeMessage.value) {
+    proxy.$modal.msgError(`识别异常结束：${recognizeMessage.value}`);
+  }
 });
 
 onBeforeUnmount(() => {
-  clearRecognizePoll();
+  // 仅销毁预览播放器；识别任务与轮询由全局 store 维持，直到用户点击「停止识别」
   teardownPlayer("idle");
 });
 </script>
@@ -685,6 +670,18 @@ onBeforeUnmount(() => {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  .card-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+  }
+
+  .card-icon {
+    font-size: 18px;
+    color: #409eff;
   }
 
   .config-card,
@@ -726,6 +723,29 @@ onBeforeUnmount(() => {
     font-size: 12px;
     color: var(--el-text-color-secondary);
     line-height: 1.5;
+  }
+
+  .recognize-fail-alert {
+    margin-bottom: 16px;
+  }
+
+  .log-tail-label {
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .log-tail-preview {
+    margin: 0;
+    padding: 8px;
+    max-height: 140px;
+    overflow: auto;
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: var(--el-fill-color-light);
+    border-radius: 4px;
   }
 
   .player-shell {

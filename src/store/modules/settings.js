@@ -10,8 +10,8 @@ const useSettingsStore = defineStore(
   {
     state: () => ({
       title: '',
-      theme: storageSetting.theme || '#409EFF',
-      sideTheme: storageSetting.sideTheme || sideTheme,
+      theme: storageSetting.theme || '#1890ff',
+      sideTheme: sideTheme,
       showSettings: showSettings,
       topNav: storageSetting.topNav === undefined ? topNav : storageSetting.topNav,
       tagsView: storageSetting.tagsView === undefined ? tagsView : storageSetting.tagsView,

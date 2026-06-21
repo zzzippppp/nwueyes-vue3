@@ -1,5 +1,5 @@
 <template>
-  <div class="app-container video-test-page">
+  <div class="app-container board-page video-test-page">
     <el-card shadow="never" class="upload-card">
       <template #header>
         <div class="card-header">
@@ -154,7 +154,7 @@
             写入行为日志
           </el-button>
           <span class="import-tip">
-            写入「数据看板 → 行为日志」；抓拍已在 YOLO 分析阶段完成（轨迹出现后 5 秒内选最佳图），写入仅入库、秒级完成
+            与直播一致：每次过线单独抓拍择优帧；下方展示监控画面与库内匹配结果，确认后可写入行为日志
           </span>
           <el-alert
             v-if="!hasCaptureSnapshots"
@@ -162,28 +162,56 @@
             :closable="false"
             show-icon
             class="capture-warn"
-            title="当前分析结果无抓拍数据，写入后行为日志将缺少人脸/人体图。请重新运行 YOLO 检测后再写入。"
+            title="当前分析结果无抓拍数据，写入后行为日志将缺少监控画面。请重新运行 YOLO 检测后再写入。"
           />
         </div>
-        <el-table :data="analyzeResult.events || []" size="small" border stripe max-height="280" empty-text="未检测到过线事件">
-          <el-table-column prop="frame" label="帧" width="80" />
-          <el-table-column prop="timeSec" label="时间(秒)" width="100" />
-          <el-table-column prop="trackId" label="轨迹 ID" width="90" />
-          <el-table-column prop="eventType" label="类型" width="90">
+        <el-table :data="displayEvents" v-loading="matchingEvents" class="board-table" max-height="360" empty-text="未检测到过线事件">
+          <el-table-column prop="frame" label="帧" width="70" />
+          <el-table-column prop="timeSec" label="时间(秒)" width="90" />
+          <el-table-column prop="trackId" label="轨迹 ID" width="80" />
+          <el-table-column prop="eventType" label="类型" width="80">
             <template #default="{ row }">
               <el-tag :type="row.eventType === 'enter' ? 'success' : 'warning'" size="small">
                 {{ row.eventType === 'enter' ? '进门' : '出门' }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="confidence" label="置信度" width="90" />
-          <el-table-column prop="inferred" label="补推断" width="80">
+          <el-table-column label="匹配人员" min-width="130">
+            <template #default="{ row }">
+              <span>{{ row.displayName || defaultEventName(row) }}</span>
+              <el-tag v-if="row.matched" size="small" type="success" class="match-tag">已匹配</el-tag>
+              <el-tag v-else size="small" type="info" class="match-tag">未匹配</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="匹配分" width="100">
+            <template #default="{ row }">
+              <span v-if="row.eventType === 'enter'">{{ formatScore(row.faceMatchScore) }}</span>
+              <span v-else>{{ formatScore(row.bodyMatchScore) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="监控画面" width="148">
+            <template #default="{ row }">
+              <el-image
+                v-if="row.snapshotUrl"
+                :src="resolveMediaUrl(row.snapshotUrl)"
+                fit="cover"
+                class="snapshot-thumb"
+                :preview-src-list="[resolveMediaUrl(row.snapshotUrl)]"
+                preview-teleported
+              />
+              <span v-else class="muted">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="qualityFlag" label="质量" width="80" />
+          <el-table-column prop="confidence" label="置信度" width="80" />
+          <el-table-column prop="inferred" label="补推断" width="70">
             <template #default="{ row }">
               <el-tag v-if="row.inferred" size="small" type="info">是</el-tag>
               <span v-else>-</span>
             </template>
           </el-table-column>
         </el-table>
+        <div v-if="matchSummary" class="match-summary">{{ matchSummary }}</div>
 
         <div class="section-title">最佳抓拍与向量（512 维）</div>
         <div v-if="analyzeResult" class="embed-actions">
@@ -279,7 +307,7 @@
         </div>
 
         <div class="section-title">轨迹统计</div>
-        <el-table :data="analyzeResult.tracks || []" size="small" border stripe max-height="280" empty-text="无轨迹">
+              <el-table :data="analyzeResult.tracks || []" class="board-table" max-height="280" empty-text="无轨迹">
           <el-table-column prop="trackId" label="轨迹 ID" width="90" />
           <el-table-column prop="firstFrame" label="首帧" width="80" />
           <el-table-column prop="lastFrame" label="末帧" width="80" />
@@ -313,7 +341,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { getPresenceDoorConfig, getVideoAnalyzeStatus, startVideoAnalyzeTest, uploadVideoTestFile, embedAnalyzeCaptures } from '@/api/dashboard/video_test'
+import { getPresenceDoorConfig, getVideoAnalyzeStatus, startVideoAnalyzeTest, uploadVideoTestFile, embedAnalyzeCaptures, matchAnalyzeEvents } from '@/api/dashboard/video_test'
 import { importBehaviorLogsFromVideo } from '@/api/dashboard/behavior_log'
 
 const apiBase = import.meta.env.VITE_APP_BASE_API || ''
@@ -339,8 +367,11 @@ const analyzeTask = ref({
 const analyzeResult = ref(null)
 const importingBehaviorLogs = ref(false)
 const embeddingCaptures = ref(false)
+const matchingEvents = ref(false)
 const captureEmbedTracks = ref([])
 const embedSummary = ref('')
+const eventMatchRows = ref([])
+const matchSummary = ref('')
 const doorConfig = ref({
   lineY: null,
   roi: '',
@@ -398,8 +429,39 @@ const debugVideoUrl = computed(() => {
 })
 
 const hasCaptureSnapshots = computed(() => {
-  return (analyzeResult.value?.captureTracks?.length || 0) > 0
+  if ((analyzeResult.value?.captureTracks?.length || 0) > 0) {
+    return true
+  }
+  const events = analyzeResult.value?.events || []
+  return events.some(ev => ev.snapshotUrl || ev.faceImageUrl || ev.bodyImageUrl)
 })
+
+const displayEvents = computed(() => {
+  const events = analyzeResult.value?.events || []
+  if (!eventMatchRows.value.length) {
+    return events.map(ev => ({
+      ...ev,
+      displayName: ev.displayName || defaultEventName(ev)
+    }))
+  }
+  const map = new Map()
+  eventMatchRows.value.forEach(row => {
+    map.set(`${row.frame}-${row.trackId}-${row.eventType}`, row)
+  })
+  return events.map(ev => {
+    const key = `${ev.frame}-${ev.trackId}-${ev.eventType}`
+    const matched = map.get(key)
+    if (matched) {
+      return { ...ev, ...matched }
+    }
+    return { ...ev, displayName: ev.displayName || defaultEventName(ev) }
+  })
+})
+
+function defaultEventName(row) {
+  const key = row.trackKey || `yolo_${row.trackId}`
+  return `未登记-${key}`
+}
 
 const canImportBehaviorLogs = computed(() => {
   return !!analyzeTaskId.value
@@ -432,6 +494,28 @@ function formatVectorPreview(vec, count = 8) {
 
 function formatVectorJson(vec) {
   return JSON.stringify(vec || [], null, 2)
+}
+
+async function loadEventMatches() {
+  if (!analyzeTaskId.value || !(analyzeResult.value?.events?.length)) {
+    return
+  }
+  if (!hasCaptureSnapshots.value) {
+    return
+  }
+  matchingEvents.value = true
+  matchSummary.value = ''
+  try {
+    const res = await matchAnalyzeEvents(analyzeTaskId.value)
+    const data = res?.data || res || {}
+    eventMatchRows.value = data.events || []
+    matchSummary.value = `共 ${data.eventCount || 0} 条过线事件 · 库内匹配 ${data.matchedCount || 0} 条`
+  } catch (e) {
+    const msg = e?.response?.data?.msg || e?.message || '人员匹配失败'
+    ElMessage.error(msg)
+  } finally {
+    matchingEvents.value = false
+  }
 }
 
 async function loadCaptureEmbeddings() {
@@ -567,7 +651,7 @@ async function importBehaviorLogs() {
   try {
     const res = await importBehaviorLogsFromVideo({
       taskId: analyzeTaskId.value,
-      locationId: 1
+      cameraId: 1
     })
     const data = res?.data || res || {}
     ElMessage.success(data.message || `已写入 ${data.insertedCount || 0} 条行为日志`)
@@ -591,7 +675,9 @@ async function startAnalyze() {
   analyzeStarting.value = true
   analyzeResult.value = null
   captureEmbedTracks.value = []
+  eventMatchRows.value = []
   embedSummary.value = ''
+  matchSummary.value = ''
   try {
     const payload = {
       uploadedFileName: effectiveUploadedFileName.value
@@ -629,8 +715,8 @@ async function pollAnalyzeOnce() {
       ElMessage.warning('分析完成但结果为空，请查看运行日志')
     } else {
       ElMessage.success('YOLO 检测完成')
-      if ((analyzeResult.value?.captureTracks?.length || 0) > 0) {
-        loadCaptureEmbeddings()
+      if (hasCaptureSnapshots.value) {
+        loadEventMatches()
       }
     }
     stopPolling()
@@ -689,6 +775,8 @@ function formatBytes(size) {
 </script>
 
 <style scoped lang="scss">
+@import '@/views/dashboard/shared/board-page.scss';
+
 .video-test-page {
   display: flex;
   flex-direction: column;
@@ -772,6 +860,27 @@ function formatBytes(size) {
   .import-tip {
     color: #909399;
     font-size: 12px;
+  }
+
+  .match-tag {
+    margin-left: 6px;
+  }
+
+  .match-summary {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #606266;
+  }
+
+  .snapshot-thumb {
+    width: 128px;
+    height: 72px;
+    border-radius: 4px;
+    background: #111827;
+  }
+
+  .muted {
+    color: #9aa4b2;
   }
 
   .capture-warn {

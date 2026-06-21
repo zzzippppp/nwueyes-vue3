@@ -56,7 +56,7 @@ export function deleteDataBoardStranger(trackKey) {
 
 export function updateDataBoardLocation(locationId, data) {
   return request({
-    url: `/dashboard/data-board/locations/${locationId}`,
+    url: `/dashboard/data-board/cameras/${locationId}`,
     method: 'put',
     data
   })

@@ -13,7 +13,7 @@ export function importBehaviorLogsFromVideo(data) {
     url: '/dashboard/behavior-log/import-from-video',
     method: 'post',
     data,
-    timeout: 60000
+    timeout: 600000
   })
 }
 
@@ -30,5 +30,12 @@ export function runAiAnalysis(data) {
     method: 'post',
     data,
     timeout: 30000
+  })
+}
+
+export function deleteBehaviorLog(id) {
+  return request({
+    url: `/dashboard/behavior-log/${id}`,
+    method: 'delete'
   })
 }
