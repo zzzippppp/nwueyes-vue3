@@ -14,7 +14,7 @@
           </template>
 
           <el-alert
-            title="萤石 accessToken 和设备列表已改为由后端自动获取，前端不再保存 AppSecret。"
+            title="摄像头列表来自数据库，已包含萤石序列号、通道与门线配置；预览与识别共用同一设备。"
             type="success"
             :closable="false"
             show-icon
@@ -34,31 +34,26 @@
             label-width="96px"
             class="config-form"
           >
-            <el-form-item label="设备列表" prop="deviceSerial">
+            <el-form-item label="摄像头" prop="cameraId">
               <el-select
-                v-model="form.deviceSerial"
-                placeholder="请选择设备"
+                v-model="form.cameraId"
+                placeholder="请选择摄像头"
                 filterable
                 clearable
                 :loading="configLoading"
-                @change="handleDeviceChange"
+                @change="handleCameraChange"
               >
                 <el-option
-                  v-for="device in deviceOptions"
-                  :key="device.deviceSerial"
-                  :label="formatDeviceLabel(device)"
-                  :value="device.deviceSerial"
+                  v-for="camera in cameraOptions"
+                  :key="camera.id"
+                  :label="formatCameraLabel(camera)"
+                  :value="camera.id"
                 />
               </el-select>
-            </el-form-item>
-
-            <el-form-item label="通道号" prop="channelNo">
-              <el-input-number
-                v-model="form.channelNo"
-                :min="1"
-                :step="1"
-                controls-position="right"
-              />
+              <div v-if="selectedCamera" class="camera-meta">
+                序列号 {{ form.deviceSerial || '—' }} · 通道 {{ form.channelNo }}
+                <span v-if="selectedCamera.lineY != null"> · 门线 Y {{ selectedCamera.lineY }}</span>
+              </div>
             </el-form-item>
 
             <el-form-item label="设备验证码">
@@ -130,7 +125,7 @@
               <el-button
                 type="success"
                 :loading="recognizeStarting"
-                :disabled="recognizeRunning || configLoading || !form.deviceSerial"
+                :disabled="recognizeRunning || configLoading || !form.cameraId"
                 @click="handleStartRecognize"
               >
                 开始识别
@@ -142,6 +137,18 @@
                 @click="handleStopRecognize"
               >
                 停止识别
+              </el-button>
+            </el-form-item>
+
+            <el-form-item class="action-row">
+              <el-button
+                type="primary"
+                plain
+                :loading="probeLoading"
+                :disabled="configLoading || !form.cameraId"
+                @click="handleCaptureProbe"
+              >
+                抽帧标定门线
               </el-button>
             </el-form-item>
 
@@ -161,12 +168,12 @@
             <span>接入说明</span>
           </template>
           <ol class="tips-list">
-            <li>后端会自动根据萤石 `appKey/appSecret` 换取 `accessToken`。</li>
-            <li>页面会自动拉取设备列表，你只需要选择设备并开始播放。</li>
-            <li>如果设备开启了视频加密，再手动补充设备验证码。</li>
+            <li>后端自动换取萤石 accessToken，摄像头从数据库加载。</li>
+            <li>选择摄像头后即可预览、抽帧标定或开始识别。</li>
+            <li>视频加密开启时，可在验证码栏补充或修改（默认读库）。</li>
           </ol>
           <el-text type="info" size="small">
-            如果设备列表为空，通常是账号下还没有可用设备，或当前萤石账号未授权该设备。
+            若列表为空，请先在数据库 camera 表配置 serial_no 与通道号。
           </el-text>
           <el-text v-if="configError" type="danger" size="small" class="config-error">
             {{ configError }}
@@ -207,12 +214,53 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <el-dialog v-model="probeVisible" title="门线标定抽帧" width="720px" destroy-on-close>
+      <div v-if="probeResult" class="probe-dialog-body">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          title="请使用「原图」在 1920×1080 坐标系下标注 line_y 与 roi，写回 camera 表或设备管理。"
+        />
+        <div class="probe-meta">
+          <span>分辨率：{{ probeResult.width }}×{{ probeResult.height }}</span>
+          <span v-if="probeResult.lineY">当前门线 Y：{{ probeResult.lineY }}</span>
+          <span v-if="probeResult.roi">ROI：{{ probeResult.roi }}</span>
+        </div>
+        <div class="probe-images">
+          <div class="probe-image-block">
+            <div class="probe-image-title">原图（用于标注）</div>
+            <el-image
+              v-if="probeResult.rawImageUrl"
+              :src="resolveMediaUrl(probeResult.rawImageUrl)"
+              :preview-src-list="[resolveMediaUrl(probeResult.rawImageUrl)]"
+              fit="contain"
+              class="probe-image"
+            />
+          </div>
+          <div v-if="probeResult.overlayImageUrl" class="probe-image-block">
+            <div class="probe-image-title">叠加当前门线/ROI</div>
+            <el-image
+              :src="resolveMediaUrl(probeResult.overlayImageUrl)"
+              :preview-src-list="[resolveMediaUrl(probeResult.overlayImageUrl)]"
+              fit="contain"
+              class="probe-image"
+            />
+          </div>
+        </div>
+        <div class="probe-path">
+          本地路径：{{ storageRootHint }}/log_library/probe/camera_{{ probeResult.cameraId }}_raw.jpg
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup name="MonitorScreen">
 import { useElementSize } from "@vueuse/core";
 import {
+  captureProbeFrame,
   getMonitorScreenConfig
 } from "@/api/monitor/screen";
 import useLiveRecognizeStore from "@/store/modules/liveRecognize";
@@ -233,12 +281,18 @@ const starting = ref(false);
 const configLoading = ref(false);
 const accessToken = ref("");
 const deviceOptions = ref([]);
+const cameraOptions = ref([]);
+const probeLoading = ref(false);
+const probeVisible = ref(false);
+const probeResult = ref(null);
+const storageRootHint = ref("storageRoot");
 const playerStatus = ref("idle");
 const configState = ref("idle");
 const lastError = ref("");
 const configError = ref("");
 
 const form = reactive({
+  cameraId: undefined,
   deviceSerial: "",
   channelNo: 1,
   validCode: "",
@@ -262,17 +316,20 @@ const recognizeLogTailPreview = computed(() => {
 });
 
 const rules = {
-  deviceSerial: [{ required: true, message: "请选择设备", trigger: "change" }],
-  channelNo: [{ required: true, message: "通道号不能为空", trigger: "change" }]
+  cameraId: [{ required: true, message: "请选择摄像头", trigger: "change" }]
 };
 
 const { width: shellWidth } = useElementSize(playerShellRef);
 
-const selectedDevice = computed(() =>
-  deviceOptions.value.find((item) => item.deviceSerial === form.deviceSerial)
+const selectedCamera = computed(() =>
+  cameraOptions.value.find((item) => item.id === form.cameraId)
 );
 
-const currentDeviceName = computed(() => selectedDevice.value?.deviceName || "");
+const currentDeviceName = computed(() => {
+  const camera = selectedCamera.value;
+  if (!camera) return "";
+  return camera.deviceName || camera.deviceCode || "";
+});
 
 const playUrl = computed(() => {
   if (!form.deviceSerial) {
@@ -290,8 +347,8 @@ const emptyDescription = computed(() => {
   if (!accessToken.value) {
     return "请先刷新配置";
   }
-  if (!form.deviceSerial) {
-    return "请选择设备后开始预览";
+  if (!form.cameraId || !form.deviceSerial) {
+    return "请选择摄像头后开始预览";
   }
   return "点击开始预览后显示监控画面";
 });
@@ -403,29 +460,58 @@ function normalizeError(error) {
   }
 }
 
-function formatDeviceLabel(device) {
-  const name = device.deviceName || device.deviceSerial;
-  const statusText = device.status === "1" ? "在线" : "离线";
-  return `${name} (${device.deviceSerial}) - ${statusText}`;
+function formatCameraLabel(camera) {
+  const name = camera.deviceName || camera.deviceCode || `摄像头${camera.id}`;
+  const serial = (camera.serialNo || camera.deviceSerial || "").toUpperCase();
+  const loc = camera.installLocation ? ` · ${camera.installLocation}` : "";
+  const ezviz = deviceOptions.value.find(
+    (d) => (d.deviceSerial || "").toUpperCase() === serial
+  );
+  let statusText = "";
+  if (ezviz) {
+    statusText = ezviz.status === "1" ? " · 在线" : " · 离线";
+  } else if (camera.onlineStatus) {
+    statusText = camera.onlineStatus === "online" ? " · 在线" : " · 离线";
+  }
+  return `${name}${loc} (${serial})${statusText}`;
+}
+
+function resolveMediaUrl(url) {
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  const base = import.meta.env.VITE_APP_BASE_API || "";
+  return `${base}${url.startsWith("/") ? url : `/${url}`}`;
 }
 
 function applyScreenConfig(data) {
   accessToken.value = data?.accessToken || "";
   deviceOptions.value = Array.isArray(data?.devices) ? data.devices : [];
+  cameraOptions.value = Array.isArray(data?.cameras) ? data.cameras : [];
 
-  const currentDevice = deviceOptions.value.find((item) => item.deviceSerial === form.deviceSerial);
-  if (currentDevice) {
-    form.channelNo = Number(currentDevice.channelNo || form.channelNo || 1);
+  if (form.cameraId && cameraOptions.value.some((c) => c.id === form.cameraId)) {
+    applyCameraToForm(selectedCamera.value);
     return;
   }
 
-  const firstDevice = deviceOptions.value[0];
-  if (firstDevice) {
-    form.deviceSerial = firstDevice.deviceSerial;
-    form.channelNo = Number(firstDevice.channelNo || data?.defaultChannelNo || 1);
+  const firstCamera = cameraOptions.value[0];
+  if (firstCamera) {
+    form.cameraId = firstCamera.id;
+    applyCameraToForm(firstCamera);
   } else {
+    form.cameraId = undefined;
     form.deviceSerial = "";
     form.channelNo = Number(data?.defaultChannelNo || 1);
+  }
+}
+
+function applyCameraToForm(camera) {
+  if (!camera) return;
+  if (camera.serialNo || camera.deviceSerial) {
+    form.deviceSerial = (camera.serialNo || camera.deviceSerial).toUpperCase();
+  }
+  form.channelNo = Number(camera.channelNo || 1);
+  if (camera.verifyCode) {
+    form.validCode = camera.verifyCode;
   }
 }
 
@@ -459,9 +545,9 @@ async function fetchScreenConfig(showMessage = false) {
   }
 }
 
-function handleDeviceChange(deviceSerial) {
-  const targetDevice = deviceOptions.value.find((item) => item.deviceSerial === deviceSerial);
-  form.channelNo = Number(targetDevice?.channelNo || 1);
+function handleCameraChange(cameraId) {
+  const camera = cameraOptions.value.find((item) => item.id === cameraId);
+  applyCameraToForm(camera);
 }
 
 async function teardownPlayer(nextStatus = "stopped") {
@@ -545,11 +631,37 @@ async function handleStop() {
 }
 
 function syncFormFromLiveStore() {
+  if (liveStore.cameraId) {
+    form.cameraId = liveStore.cameraId;
+    applyCameraToForm(cameraOptions.value.find((c) => c.id === liveStore.cameraId));
+  }
   if (liveStore.deviceSerial) {
     form.deviceSerial = liveStore.deviceSerial;
   }
   if (liveStore.streamMode) {
     form.streamMode = liveStore.streamMode;
+  }
+}
+
+async function handleCaptureProbe() {
+  const isValid = await configRef.value.validate().catch(() => false);
+  if (!isValid) return;
+  probeLoading.value = true;
+  try {
+    const res = await captureProbeFrame({
+      cameraId: form.cameraId,
+      deviceSerial: form.deviceSerial,
+      channelNo: form.channelNo,
+      validCode: form.validCode || undefined,
+      streamMode: form.streamMode
+    });
+    probeResult.value = res?.data || res;
+    probeVisible.value = true;
+    proxy.$modal.msgSuccess(probeResult.value?.message || "抽帧成功");
+  } catch (error) {
+    proxy.$modal.msgError(`抽帧失败：${normalizeError(error)}`);
+  } finally {
+    probeLoading.value = false;
   }
 }
 
@@ -560,11 +672,11 @@ async function handleStartRecognize() {
   }
   try {
     const task = await liveStore.startRecognize({
+      cameraId: form.cameraId,
       deviceSerial: form.deviceSerial,
       channelNo: form.channelNo,
       validCode: form.validCode || undefined,
-      streamMode: form.streamMode,
-      locationId: 1
+      streamMode: form.streamMode
     });
     syncFormFromLiveStore();
     if (liveStore.status === "running") {
@@ -725,6 +837,13 @@ onBeforeUnmount(() => {
     line-height: 1.5;
   }
 
+  .camera-meta {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    line-height: 1.5;
+  }
+
   .recognize-fail-alert {
     margin-bottom: 16px;
   }
@@ -792,6 +911,42 @@ onBeforeUnmount(() => {
 
   .error-text {
     color: var(--el-color-danger);
+  }
+
+  .probe-dialog-body {
+    display: grid;
+    gap: 12px;
+  }
+
+  .probe-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .probe-images {
+    display: grid;
+    gap: 16px;
+  }
+
+  .probe-image-title {
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .probe-image {
+    width: 100%;
+    max-height: 360px;
+    background: #0f172a;
+  }
+
+  .probe-path {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    word-break: break-all;
   }
 }
 </style>

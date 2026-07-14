@@ -37,3 +37,12 @@ export function getActiveLiveRecognize() {
     method: "get"
   });
 }
+
+export function captureProbeFrame(data) {
+  return request({
+    url: "/monitor/screen/probe-frame",
+    method: "post",
+    data,
+    timeout: 120000
+  });
+}

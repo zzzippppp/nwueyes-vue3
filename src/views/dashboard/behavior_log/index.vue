@@ -1,11 +1,12 @@
 <template>
   <div class="app-container board-page behavior-log-page">
     <el-form ref="queryRef" :inline="true" class="query-form">
-      <el-form-item label="统计日期" prop="dateRange">
+      <el-form-item label="日期" prop="dateRange">
         <el-date-picker
           v-model="dateRange"
           type="daterange"
           value-format="YYYY-MM-DD"
+          :disabled-date="disableFutureDate"
           range-separator="至"
           start-placeholder="开始日期"
           end-placeholder="结束日期"
@@ -13,7 +14,7 @@
           style="width: 260px"
         />
       </el-form-item>
-      <el-form-item label="监控点位" prop="locationId">
+      <el-form-item label="点位" prop="locationId">
         <el-select v-model="locationId" clearable placeholder="全部点位" style="width: 200px">
           <el-option v-for="item in locationOptions" :key="item.locationId" :label="item.locationName" :value="item.locationId" />
         </el-select>
@@ -29,14 +30,16 @@
         <el-button icon="RefreshRight" :loading="loading" @click="handleRefresh">刷新</el-button>
         <el-button icon="Refresh" @click="resetQuery">重置</el-button>
       </el-form-item>
-      <el-form-item v-if="sceneFilter">
-        <el-button type="warning" plain @click="clearSceneFilter">清除场景筛选</el-button>
-      </el-form-item>
     </el-form>
 
     <el-table v-loading="loading" :data="rows" class="board-table">
       <el-table-column prop="id" label="ID" width="74" />
-      <el-table-column prop="displayName" label="名称" min-width="140" />
+      <el-table-column prop="displayName" label="名称" min-width="120" />
+      <el-table-column prop="personType" label="人员类型" width="100">
+        <template #default="{ row }">
+          {{ formatPersonKindLabel(row.personType || row.personKind) }}
+        </template>
+      </el-table-column>
       <el-table-column prop="eventType" label="行为" width="86">
         <template #default="{ row }">
           <el-tag :type="row.eventType === 'enter' ? 'success' : 'warning'" size="small">
@@ -45,15 +48,8 @@
         </template>
       </el-table-column>
       <el-table-column prop="eventTime" label="时间" min-width="162" />
-      <el-table-column prop="locationName" label="点位" min-width="120" />
-      <el-table-column prop="trackKey" label="轨迹" min-width="118" />
-      <el-table-column prop="sceneGroupId" label="场景组" min-width="150">
-        <template #default="{ row }">
-          <el-button v-if="row.sceneGroupId" link type="primary" @click="filterScene(row.sceneGroupId)">
-            {{ shortScene(row.sceneGroupId) }}
-          </el-button>
-          <span v-else class="muted">-</span>
-        </template>
+      <el-table-column prop="deviceName" label="点位" min-width="120">
+        <template #default="{ row }">{{ row.deviceName || row.locationName || '—' }}</template>
       </el-table-column>
       <el-table-column label="AI 分析" min-width="142">
         <template #default="{ row }">
@@ -217,7 +213,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteBehaviorLog, listAiAnalysisModels, listBehaviorLogs, runAiAnalysis } from '@/api/dashboard/behavior_log'
 import { getDataBoardSummary } from '@/api/dashboard/data_board'
 import { getMonitorScreenConfig } from '@/api/monitor/screen'
-import { dateRangeParams, defaultDateRange } from '@/utils/statDateRange'
+import { dateRangeParams, defaultDateRangeLastDays, isFutureDate } from '@/utils/statDateRange'
+import { formatPersonKindLabel } from '@/utils/personKind'
 
 const AnalysisList = defineComponent({
   name: 'AnalysisList',
@@ -251,10 +248,9 @@ const apiBase = import.meta.env.VITE_APP_BASE_API || ''
 const loading = ref(false)
 const analysisRunning = ref(false)
 const rows = ref([])
-const allRows = ref([])
 const modelOptions = ref([])
 const selectedModelKeys = ref([])
-const dateRange = ref(defaultDateRange())
+const dateRange = ref(defaultDateRangeLastDays(30))
 const locationId = ref(undefined)
 const eventType = ref(undefined)
 const locationOptions = ref([])
@@ -263,7 +259,6 @@ const previewVisible = ref(false)
 const currentRow = ref(null)
 const activeVideoTab = ref('person')
 const activeAnalysisTab = ref('person')
-const sceneFilter = ref('')
 const ezvizAccessToken = ref('')
 const ezvizLoading = ref(false)
 const ezvizError = ref('')
@@ -271,11 +266,6 @@ const ezvizPlayerReady = ref(false)
 const ezvizPlayerRef = shallowRef(null)
 
 const EZVIZ_PLAYER_CONTAINER_PREFIX = 'behavior-ezviz-player'
-
-const filteredRows = computed(() => {
-  if (!sceneFilter.value) return allRows.value
-  return allRows.value.filter(row => row.sceneGroupId === sceneFilter.value)
-})
 
 const canRunPersonalAnalysis = computed(() => {
   return canSubmitAnalysis(currentRow.value?.clip)
@@ -289,12 +279,6 @@ const activeClip = computed(() => {
   if (!currentRow.value) return null
   return activeVideoTab.value === 'scene' ? currentRow.value.sceneClip : currentRow.value.clip
 })
-
-function personKindText(kind) {
-  if (kind === 'known') return '已知'
-  if (kind === 'stranger') return '陌生'
-  return '未知'
-}
 
 function analysisStatusText(status) {
   if (status === 'success') return '完成'
@@ -361,11 +345,6 @@ function canSubmitAnalysis(clip) {
   if (clip.publicVideoUrl) return true
   if (!clip.videoUrl || isEzvizPlaybackUrl(clip.videoUrl)) return false
   return true
-}
-
-function shortScene(sceneGroupId) {
-  if (!sceneGroupId) return '-'
-  return sceneGroupId.length > 18 ? `...${sceneGroupId.slice(-15)}` : sceneGroupId
 }
 
 function resolveMediaUrl(rawUrl) {
@@ -492,16 +471,6 @@ function openPreview(row) {
   previewVisible.value = true
 }
 
-function filterScene(sceneGroupId) {
-  sceneFilter.value = sceneFilter.value === sceneGroupId ? '' : sceneGroupId
-  rows.value = filteredRows.value
-}
-
-function clearSceneFilter() {
-  sceneFilter.value = ''
-  rows.value = filteredRows.value
-}
-
 async function runSelectedAnalysis(targetType) {
   if (!currentRow.value || !selectedModelKeys.value.length) return
   const targetId = targetType === 'scene_group'
@@ -526,7 +495,7 @@ async function refreshCurrentRow() {
   const rowId = currentRow.value?.id
   await loadRows()
   if (rowId) {
-    currentRow.value = allRows.value.find(row => row.id === rowId) || currentRow.value
+    currentRow.value = rows.value.find(row => row.id === rowId) || currentRow.value
   }
   await nextTick()
   await setupEzvizPlayback()
@@ -555,8 +524,10 @@ async function loadRows() {
       cameraId: locationId.value,
       eventType: eventType.value
     })
-    allRows.value = res?.data || res || []
-    rows.value = filteredRows.value
+    rows.value = (res?.data || res || []).map(row => ({
+      ...row,
+      locationName: row.deviceName || row.locationName || '—'
+    }))
   } finally {
     loading.value = false
   }
@@ -571,11 +542,17 @@ function handleRefresh() {
 }
 
 function resetQuery() {
-  dateRange.value = defaultDateRange()
+  dateRange.value = defaultDateRangeLastDays(30)
   locationId.value = undefined
   eventType.value = undefined
-  sceneFilter.value = ''
   loadRows()
+}
+
+function disableFutureDate(date) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return isFutureDate(`${y}-${m}-${d}`)
 }
 
 watch(previewVisible, async (visible) => {

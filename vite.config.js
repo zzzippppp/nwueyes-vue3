@@ -25,7 +25,9 @@ export default defineConfig(({ mode, command }) => {
     },
     // vite 相关配置
     server: {
-      port: 80,
+      // 避免占用 80 端口（常被 nginx/其他服务占用，导致访问错地址或静态资源 404）
+      port: 8088,
+      strictPort: false,
       host: true,
       open: true,
       proxy: {

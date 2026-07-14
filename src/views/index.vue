@@ -3,7 +3,7 @@
     <div class="home-hero">
       <h1 class="home-title">基于大模型的安全监测预警平台</h1>
       <p class="home-subtitle">智能视频分析 · 行为识别 · 安全预警</p>
-    </div>
+          </div>
   </div>
 </template>
 
@@ -12,7 +12,7 @@
 
 <style scoped lang="scss">
 .home {
-  padding: 0;
+    padding: 0;
   min-height: calc(100vh - 50px - 40px);
   height: calc(100vh - 50px - 40px);
   box-sizing: border-box;
@@ -30,7 +30,7 @@
 .home-title {
   margin: 0;
   font-size: 32px;
-  font-weight: 700;
+      font-weight: 700;
   color: #1f2937;
   letter-spacing: 1px;
 }

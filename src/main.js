@@ -81,4 +81,20 @@ app.use(ElementPlus, {
   size: Cookies.get('size') || 'large'
 })
 
-app.mount('#app')
+function hideBootLoader() {
+  document.body?.classList.add('loaded')
+  document.getElementById('loader-wrapper')?.remove()
+}
+
+app.config.errorHandler = (err) => {
+  console.error('[vue] bootstrap error:', err)
+  hideBootLoader()
+}
+
+try {
+  app.mount('#app')
+  hideBootLoader()
+} catch (err) {
+  console.error('[app] mount failed:', err)
+  hideBootLoader()
+}

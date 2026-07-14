@@ -16,6 +16,30 @@
         :title="doorConfigTitle"
       />
 
+      <el-form label-width="96px" class="camera-form">
+        <el-form-item label="摄像头" required>
+          <el-select
+            v-model="selectedCameraId"
+            placeholder="请选择视频来源摄像头"
+            filterable
+            :loading="cameraLoading"
+            style="width: 100%"
+            @change="handleCameraChange"
+          >
+            <el-option
+              v-for="camera in cameraOptions"
+              :key="camera.id"
+              :label="formatCameraLabel(camera)"
+              :value="camera.id"
+            />
+          </el-select>
+          <div v-if="selectedCamera" class="camera-meta">
+            序列号 {{ selectedCamera.serialNo || selectedCamera.deviceSerial || '—' }}
+            <span v-if="selectedCamera.lineY != null"> · 门线 Y {{ selectedCamera.lineY }}</span>
+          </div>
+        </el-form-item>
+      </el-form>
+
       <el-upload
         class="video-uploader"
         drag
@@ -154,7 +178,7 @@
             写入行为日志
           </el-button>
           <span class="import-tip">
-            与直播一致：每次过线单独抓拍择优帧；下方展示监控画面与库内匹配结果，确认后可写入行为日志
+            写入时使用本次分析所选摄像头（cameraId={{ analyzeCameraId || selectedCameraId || '—' }}）；与直播一致：每次过线单独抓拍择优帧
           </span>
           <el-alert
             v-if="!hasCaptureSnapshots"
@@ -342,6 +366,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { getPresenceDoorConfig, getVideoAnalyzeStatus, startVideoAnalyzeTest, uploadVideoTestFile, embedAnalyzeCaptures, matchAnalyzeEvents } from '@/api/dashboard/video_test'
+import { getMonitorScreenConfig } from '@/api/monitor/screen'
 import { importBehaviorLogsFromVideo } from '@/api/dashboard/behavior_log'
 
 const apiBase = import.meta.env.VITE_APP_BASE_API || ''
@@ -372,6 +397,11 @@ const captureEmbedTracks = ref([])
 const embedSummary = ref('')
 const eventMatchRows = ref([])
 const matchSummary = ref('')
+const cameraLoading = ref(false)
+const cameraOptions = ref([])
+const selectedCameraId = ref(null)
+/** 本次分析任务绑定的摄像头（写入行为日志时使用） */
+const analyzeCameraId = ref(null)
 const doorConfig = ref({
   lineY: null,
   roi: '',
@@ -391,25 +421,74 @@ const effectiveUploadedFileName = computed(() => {
   return lastUpload.value.fileName || manualUploadedFileName.value
 })
 
+const selectedCamera = computed(() => {
+  if (!selectedCameraId.value) return null
+  return cameraOptions.value.find(c => c.id === selectedCameraId.value) || null
+})
+
 const doorConfigTitle = computed(() => {
   const c = doorConfig.value
+  const cam = selectedCamera.value
+  const camLabel = cam ? ` · ${cam.deviceName || cam.deviceSerial || cam.id}` : ''
   if (c.lineY == null || !c.roi) {
-    return '门区标定：加载中…（与直播识别共用 application-local.yml）'
+    return `门区标定：加载中…${camLabel}`
   }
   const conf = c.yoloConf != null ? ` · conf=${c.yoloConf}` : ''
   const win = c.snapshotWindowSec != null ? ` · 抓拍窗=${c.snapshotWindowSec}s` : ''
-  return `门区标定（与直播一致）：lineY=${c.lineY} · ROI=${c.roi}${conf}${win}`
+  return `门区标定（与所选摄像头一致）：lineY=${c.lineY} · ROI=${c.roi}${conf}${win}${camLabel}`
 })
+
+function formatCameraLabel(camera) {
+  const name = camera.deviceName || camera.deviceSerial || `摄像头 ${camera.id}`
+  const online = camera.onlineStatus === 'online' ? '在线' : '离线'
+  return `${name}（${online}）`
+}
+
+function applyDoorConfigFromCamera(camera) {
+  if (!camera) return
+  doorConfig.value = {
+    lineY: camera.lineY ?? doorConfig.value.lineY,
+    roi: camera.roi || doorConfig.value.roi,
+    yoloConf: doorConfig.value.yoloConf,
+    snapshotWindowSec: doorConfig.value.snapshotWindowSec
+  }
+}
+
+function handleCameraChange(cameraId) {
+  const camera = cameraOptions.value.find(c => c.id === cameraId)
+  applyDoorConfigFromCamera(camera)
+}
+
+async function loadCameraOptions() {
+  cameraLoading.value = true
+  try {
+    const res = await getMonitorScreenConfig()
+    const data = res?.data ?? res ?? {}
+    cameraOptions.value = data.cameras || []
+    if (!selectedCameraId.value && cameraOptions.value.length) {
+      const preferred = cameraOptions.value.find(c => c.id === 2068) || cameraOptions.value[0]
+      selectedCameraId.value = preferred.id
+      applyDoorConfigFromCamera(preferred)
+    }
+  } catch (e) {
+    ElMessage.warning('摄像头列表加载失败')
+  } finally {
+    cameraLoading.value = false
+  }
+}
 
 async function loadDoorConfig() {
   try {
     const res = await getPresenceDoorConfig()
     const data = res?.data ?? res ?? {}
     doorConfig.value = {
-      lineY: data.lineY ?? null,
-      roi: data.roi || '',
+      ...doorConfig.value,
       yoloConf: data.yoloConf ?? null,
       snapshotWindowSec: data.snapshotWindowSec ?? null
+    }
+    if (!selectedCamera.value) {
+      doorConfig.value.lineY = data.lineY ?? doorConfig.value.lineY
+      doorConfig.value.roi = data.roi || doorConfig.value.roi
     }
   } catch (e) {
     ElMessage.warning('门区配置加载失败，将使用后端默认值')
@@ -417,6 +496,7 @@ async function loadDoorConfig() {
 }
 
 onMounted(() => {
+  loadCameraOptions()
   loadDoorConfig()
 })
 
@@ -644,6 +724,11 @@ async function importBehaviorLogs() {
     ElMessage.warning('请先完成 YOLO 检测且存在过线事件')
     return
   }
+  const cameraId = analyzeCameraId.value || selectedCameraId.value
+  if (!cameraId) {
+    ElMessage.warning('请先选择摄像头')
+    return
+  }
   if (!hasCaptureSnapshots.value) {
     ElMessage.warning('当前结果无抓拍数据，建议重新运行 YOLO 检测后再写入')
   }
@@ -651,7 +736,7 @@ async function importBehaviorLogs() {
   try {
     const res = await importBehaviorLogsFromVideo({
       taskId: analyzeTaskId.value,
-      cameraId: 1
+      cameraId
     })
     const data = res?.data || res || {}
     ElMessage.success(data.message || `已写入 ${data.insertedCount || 0} 条行为日志`)
@@ -664,6 +749,10 @@ async function importBehaviorLogs() {
 }
 
 async function startAnalyze() {
+  if (!selectedCameraId.value) {
+    ElMessage.warning('请先选择摄像头')
+    return
+  }
   if (!effectiveUploadedFileName.value && selectedFile.value) {
     ElMessage.info('正在先上传视频，再启动检测…')
     await submitUpload()
@@ -680,7 +769,8 @@ async function startAnalyze() {
   matchSummary.value = ''
   try {
     const payload = {
-      uploadedFileName: effectiveUploadedFileName.value
+      uploadedFileName: effectiveUploadedFileName.value,
+      cameraId: selectedCameraId.value
     }
     if (doorConfig.value.lineY != null) {
       payload.lineY = doorConfig.value.lineY
@@ -691,6 +781,7 @@ async function startAnalyze() {
     const res = await startVideoAnalyzeTest(payload)
     const task = unwrapTask(res)
     analyzeTaskId.value = task.taskId || ''
+    analyzeCameraId.value = task.cameraId ?? selectedCameraId.value
     analyzeTask.value = { ...analyzeTask.value, ...task }
     analyzeRunning.value = true
     ElMessage.success('已启动 YOLO 检测')
@@ -710,6 +801,11 @@ async function pollAnalyzeOnce() {
   analyzeTask.value = { ...analyzeTask.value, ...task }
   if (task.status === 'success') {
     analyzeResult.value = parseResultJson(task.resultJson)
+    if (task.cameraId) {
+      analyzeCameraId.value = task.cameraId
+    } else if (analyzeResult.value?.cameraId) {
+      analyzeCameraId.value = analyzeResult.value.cameraId
+    }
     analyzeRunning.value = false
     if (!analyzeResult.value) {
       ElMessage.warning('分析完成但结果为空，请查看运行日志')
@@ -787,6 +883,20 @@ function formatBytes(size) {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  .door-config-alert {
+    margin-bottom: 12px;
+  }
+
+  .camera-form {
+    margin-bottom: 12px;
+
+    .camera-meta {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #909399;
+    }
   }
 
   .upload-actions {
