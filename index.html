@@ -209,6 +209,17 @@
       <div class="load_title">正在加载系统资源，请耐心等待</div>
     </div>
   </div>
+  <script>
+    window.addEventListener('error', function (event) {
+      if (event.target && event.target.tagName === 'SCRIPT') {
+        document.body.classList.add('loaded')
+        var title = document.querySelector('#loader-wrapper .load_title')
+        if (title) {
+          title.textContent = '系统资源加载失败，请打开控制台查看错误或刷新重试'
+        }
+      }
+    }, true)
+  </script>
   <script type="module" src="/src/main.js"></script>
 </body>
 

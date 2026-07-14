@@ -36,6 +36,7 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
       status: saved?.status || 'idle',
       message: saved?.message || '',
       deviceSerial: saved?.deviceSerial || '',
+      cameraId: saved?.cameraId || null,
       streamMode: saved?.streamMode || 'cloud_hls',
       starting: false,
       stopping: false,
@@ -60,6 +61,7 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
           status: this.status,
           message: this.message,
           deviceSerial: this.deviceSerial,
+          cameraId: this.cameraId,
           streamMode: this.streamMode
         })
       } else {
@@ -91,6 +93,9 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
       }
       if (task.deviceSerial) {
         this.deviceSerial = task.deviceSerial
+      }
+      if (task.cameraId) {
+        this.cameraId = task.cameraId
       }
       if (task.streamMode) {
         this.streamMode = task.streamMode
