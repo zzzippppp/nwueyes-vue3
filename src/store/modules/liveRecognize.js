@@ -37,7 +37,7 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
       message: saved?.message || '',
       deviceSerial: saved?.deviceSerial || '',
       cameraId: saved?.cameraId || null,
-      streamMode: saved?.streamMode || 'cloud_hls',
+      streamMode: saved?.streamMode || 'lan_rtsp',
       starting: false,
       stopping: false,
       pollTimer: null,
@@ -191,7 +191,10 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
       this.starting = true
       this.message = ''
       try {
-        const response = await startLiveRecognize(payload)
+        const response = await startLiveRecognize({
+          ...payload,
+          streamMode: 'lan_rtsp'
+        })
         this.applyTask(response.data)
         if (this.taskId) {
           this.startPoll()

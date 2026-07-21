@@ -52,17 +52,15 @@ const useUserStore = defineStore(
           })
         })
       },
-      // 退出系统
+      // 退出系统（接口失败也清本地，避免过期 token 残留导致反复弹「登录状态已过期」）
       logOut() {
-        return new Promise((resolve, reject) => {
-          logout(this.token).then(() => {
+        return new Promise((resolve) => {
+          logout(this.token).catch(() => {}).finally(() => {
             this.token = ''
             this.roles = []
             this.permissions = []
             removeToken()
             resolve()
-          }).catch(error => {
-            reject(error)
           })
         })
       }

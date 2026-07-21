@@ -39,9 +39,14 @@ router.beforeEach((to, from, next) => {
             next({ ...to, replace: true }) // hack方法 确保addRoutes已完成
           })
         }).catch(err => {
+          // 过期/无效 token：清本地后静默进登录页，避免反复弹「登录状态已过期」
           useUserStore().logOut().then(() => {
-            ElMessage.error(err)
-            next({ path: '/' })
+            isRelogin.show = false
+            const expired = typeof err === 'string' && err.includes('会话已过期')
+            if (!expired && err) {
+              ElMessage.error(err)
+            }
+            next({ path: '/login' })
           })
         })
       } else {
