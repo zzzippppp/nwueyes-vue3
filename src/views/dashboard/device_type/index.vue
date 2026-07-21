@@ -1,135 +1,243 @@
 <template>
-  <div class="app-container board-page">
-    <div class="tab-actions">
-      <el-button type="primary" @click="openCreate">新增类型</el-button>
-      <el-button :loading="loading" @click="loadRows">刷新</el-button>
-    </div>
-    <el-table v-loading="loading" :data="rows" class="board-table">
-      <el-table-column prop="typeCode" label="类型编码" min-width="140" />
-      <el-table-column prop="typeName" label="类型名称" min-width="160" />
-      <el-table-column prop="remark" label="说明" min-width="240">
-        <template #default="{ row }">{{ row.remark || '—' }}</template>
+  <div class="app-container">
+    <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch">
+      <el-form-item label="类型编码" prop="typeCode">
+        <el-input
+          v-model="queryParams.typeCode"
+          placeholder="请输入类型编码"
+          clearable
+          style="width: 200px"
+          @keyup.enter="handleQuery"
+        />
+      </el-form-item>
+      <el-form-item label="类型名称" prop="typeName">
+        <el-input
+          v-model="queryParams.typeName"
+          placeholder="请输入类型名称"
+          clearable
+          style="width: 200px"
+          @keyup.enter="handleQuery"
+        />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
+        <el-button icon="Refresh" @click="resetQuery">重置</el-button>
+      </el-form-item>
+    </el-form>
+
+    <el-row :gutter="10" class="mb8">
+      <el-col :span="1.5">
+        <el-button
+          type="primary"
+          plain
+          icon="Plus"
+          @click="handleAdd"
+          v-hasPermi="['dashboard:device-type:add']"
+        >新增</el-button>
+      </el-col>
+      <el-col :span="1.5">
+        <el-button
+          type="success"
+          plain
+          icon="Edit"
+          :disabled="single"
+          @click="handleUpdate"
+          v-hasPermi="['dashboard:device-type:edit']"
+        >修改</el-button>
+      </el-col>
+      <el-col :span="1.5">
+        <el-button
+          type="danger"
+          plain
+          icon="Delete"
+          :disabled="multiple"
+          @click="handleDelete"
+          v-hasPermi="['dashboard:device-type:remove']"
+        >删除</el-button>
+      </el-col>
+      <el-col :span="1.5">
+        <el-button
+          type="warning"
+          plain
+          icon="Download"
+          @click="handleExport"
+          v-hasPermi="['dashboard:device-type:export']"
+        >导出</el-button>
+      </el-col>
+      <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
+    </el-row>
+
+    <el-table v-loading="loading" :data="typeList" @selection-change="handleSelectionChange">
+      <el-table-column type="selection" width="55" align="center" />
+      <el-table-column label="类型编号" align="center" prop="id" width="100" />
+      <el-table-column label="类型编码" align="center" prop="typeCode" />
+      <el-table-column label="类型名称" align="center" prop="typeName" />
+      <el-table-column label="说明" align="center" prop="remark" :show-overflow-tooltip="true" />
+      <el-table-column label="创建时间" align="center" prop="createdAt" width="180">
+        <template #default="scope">
+          <span>{{ parseTime(scope.row.createdAt) }}</span>
+        </template>
       </el-table-column>
-      <el-table-column prop="updatedAt" label="更新时间" min-width="170" />
-      <el-table-column label="操作" width="160" align="center" fixed="right" class-name="small-padding fixed-width">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="removeRow(row)">删除</el-button>
+      <el-table-column label="操作" width="180" align="center" class-name="small-padding fixed-width">
+        <template #default="scope">
+          <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['dashboard:device-type:edit']">修改</el-button>
+          <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['dashboard:device-type:remove']">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="520px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+    <pagination
+      v-show="total > 0"
+      :total="total"
+      v-model:page="queryParams.pageNum"
+      v-model:limit="queryParams.pageSize"
+      @pagination="getList"
+    />
+
+    <el-dialog :title="title" v-model="open" width="500px" append-to-body>
+      <el-form ref="typeRef" :model="form" :rules="rules" label-width="80px">
         <el-form-item label="类型编码" prop="typeCode">
-          <el-input v-model="form.typeCode" :disabled="!!form.id" placeholder="如 ipc / bullet" />
+          <el-input v-model="form.typeCode" placeholder="请输入类型编码" />
         </el-form-item>
         <el-form-item label="类型名称" prop="typeName">
-          <el-input v-model="form.typeName" placeholder="如 枪机 / 鱼眼摄像机" />
+          <el-input v-model="form.typeName" placeholder="请输入类型名称" />
         </el-form-item>
-        <el-form-item label="说明">
-          <el-input v-model="form.remark" type="textarea" :rows="3" />
+        <el-form-item label="说明" prop="remark">
+          <el-input v-model="form.remark" type="textarea" placeholder="请输入内容" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveRow">保存</el-button>
+        <div class="dialog-footer">
+          <el-button type="primary" @click="submitForm">确 定</el-button>
+          <el-button @click="cancel">取 消</el-button>
+        </div>
       </template>
     </el-dialog>
   </div>
 </template>
 
-<script setup>
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { createDeviceType, deleteDeviceType, listDeviceTypes, updateDeviceType } from '@/api/dashboard/device_type'
+<script setup name="DeviceType">
+import { listDeviceType, getDeviceType, addDeviceType, updateDeviceType, delDeviceType } from '@/api/dashboard/device_type'
 
-const loading = ref(false)
-const saving = ref(false)
-const rows = ref([])
-const dialogVisible = ref(false)
-const dialogTitle = ref('新增类型')
-const formRef = ref()
-const form = reactive({
-  id: null,
-  typeCode: '',
-  typeName: '',
-  remark: ''
-})
-const rules = {
-  typeCode: [{ required: true, message: '请输入类型编码', trigger: 'blur' }],
-  typeName: [{ required: true, message: '请输入类型名称', trigger: 'blur' }]
-}
+const { proxy } = getCurrentInstance()
 
-function resetForm() {
-  Object.assign(form, { id: null, typeCode: '', typeName: '', remark: '' })
-}
+const typeList = ref([])
+const open = ref(false)
+const loading = ref(true)
+const showSearch = ref(true)
+const ids = ref([])
+const single = ref(true)
+const multiple = ref(true)
+const total = ref(0)
+const title = ref('')
 
-async function loadRows() {
-  loading.value = true
-  try {
-    const res = await listDeviceTypes()
-    rows.value = res?.data || res || []
-  } finally {
-    loading.value = false
+const data = reactive({
+  form: {},
+  queryParams: {
+    pageNum: 1,
+    pageSize: 10,
+    typeCode: undefined,
+    typeName: undefined
+  },
+  rules: {
+    typeCode: [{ required: true, message: '类型编码不能为空', trigger: 'blur' }],
+    typeName: [{ required: true, message: '类型名称不能为空', trigger: 'blur' }]
   }
-}
+})
 
-function openCreate() {
-  resetForm()
-  dialogTitle.value = '新增类型'
-  dialogVisible.value = true
-}
+const { queryParams, form, rules } = toRefs(data)
 
-function openEdit(row) {
-  Object.assign(form, {
-    id: row.id,
-    typeCode: row.typeCode,
-    typeName: row.typeName,
-    remark: row.remark || ''
+function getList() {
+  loading.value = true
+  listDeviceType(queryParams.value).then(response => {
+    typeList.value = response.rows
+    total.value = response.total
+    loading.value = false
   })
-  dialogTitle.value = '编辑类型'
-  dialogVisible.value = true
 }
 
-async function saveRow() {
-  if (!formRef.value) return
-  await formRef.value.validate(async valid => {
-    if (!valid) return
-    saving.value = true
-    try {
-      const payload = {
-        typeCode: form.typeCode,
-        typeName: form.typeName,
-        remark: form.remark
-      }
-      if (form.id) {
-        await updateDeviceType(form.id, payload)
+function cancel() {
+  open.value = false
+  reset()
+}
+
+function reset() {
+  form.value = {
+    id: undefined,
+    typeCode: undefined,
+    typeName: undefined,
+    remark: undefined
+  }
+  proxy.resetForm('typeRef')
+}
+
+function handleQuery() {
+  queryParams.value.pageNum = 1
+  getList()
+}
+
+function resetQuery() {
+  proxy.resetForm('queryRef')
+  handleQuery()
+}
+
+function handleSelectionChange(selection) {
+  ids.value = selection.map(item => item.id)
+  single.value = selection.length != 1
+  multiple.value = !selection.length
+}
+
+function handleAdd() {
+  reset()
+  open.value = true
+  title.value = '添加设备类型'
+}
+
+function handleUpdate(row) {
+  reset()
+  const id = row.id || ids.value
+  getDeviceType(id).then(response => {
+    form.value = response.data
+    open.value = true
+    title.value = '修改设备类型'
+  })
+}
+
+function submitForm() {
+  proxy.$refs['typeRef'].validate(valid => {
+    if (valid) {
+      if (form.value.id != undefined) {
+        updateDeviceType(form.value).then(() => {
+          proxy.$modal.msgSuccess('修改成功')
+          open.value = false
+          getList()
+        })
       } else {
-        await createDeviceType(payload)
+        addDeviceType(form.value).then(() => {
+          proxy.$modal.msgSuccess('新增成功')
+          open.value = false
+          getList()
+        })
       }
-      dialogVisible.value = false
-      await loadRows()
-      ElMessage.success('保存成功')
-    } finally {
-      saving.value = false
     }
   })
 }
 
-function removeRow(row) {
-  ElMessageBox.confirm(`确认删除类型「${row.typeName}」吗？`, '提示', { type: 'warning' })
-    .then(async () => {
-      await deleteDeviceType(row.id)
-      await loadRows()
-      ElMessage.success('删除成功')
-    })
-    .catch(() => {})
+function handleDelete(row) {
+  const typeIds = row.id || ids.value
+  proxy.$modal.confirm('是否确认删除类型编号为"' + typeIds + '"的数据项？').then(function () {
+    return delDeviceType(typeIds)
+  }).then(() => {
+    getList()
+    proxy.$modal.msgSuccess('删除成功')
+  }).catch(() => {})
 }
 
-onMounted(loadRows)
-</script>
+function handleExport() {
+  proxy.download('dashboard/device-type/export', {
+    ...queryParams.value
+  }, `device_type_${new Date().getTime()}.xlsx`)
+}
 
-<style scoped lang="scss">
-@import '@/views/dashboard/shared/board-page.scss';
-</style>
+getList()
+</script>

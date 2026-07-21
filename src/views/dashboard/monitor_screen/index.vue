@@ -14,7 +14,7 @@
           </template>
 
           <el-alert
-            title="摄像头列表来自数据库，已包含萤石序列号、通道与门线配置；预览与识别共用同一设备。"
+            title="预览与识别均走局域网 RTSP（不经萤石公网）。摄像头需配置 IP、验证码，并已开启 RTSP；浏览器预览依赖本机 go2rtc。"
             type="success"
             :closable="false"
             show-icon
@@ -59,20 +59,16 @@
             <el-form-item label="设备验证码">
               <el-input
                 v-model.trim="form.validCode"
-                placeholder="视频加密开启时必填；已关加密可留空"
+                placeholder="局域网 RTSP 密码（机身底座验证码，默认读库）"
               />
             </el-form-item>
 
-            <el-form-item label="识别拉流">
-              <el-radio-group v-model="form.streamMode">
-                <el-radio label="cloud_hls">公网云转发 (推荐)</el-radio>
-                <el-radio label="lan_rtsp">局域网 RTSP</el-radio>
-              </el-radio-group>
+            <el-form-item label="拉流方式">
+              <el-tag type="success" size="small">局域网 RTSP</el-tag>
               <div class="stream-mode-tip">
-                公网模式经萤石云 HLS 中转（主码流）。若识别服务器与摄像头同网，优先选「局域网 RTSP」。
+                识别与预览均直连摄像头 RTSP，不占用萤石开放平台并发。
               </div>
               <el-alert
-                v-if="form.streamMode === 'lan_rtsp'"
                 type="info"
                 :closable="false"
                 show-icon
@@ -111,7 +107,7 @@
               <el-button
                 type="primary"
                 :loading="starting"
-                :disabled="configLoading || !accessToken"
+                :disabled="configLoading || !form.cameraId"
                 @click="handlePreview"
               >
                 开始预览
@@ -151,15 +147,6 @@
                 抽帧标定门线
               </el-button>
             </el-form-item>
-
-            <el-form-item class="action-row">
-              <el-button :disabled="!hasPlayer" @click="handleOpenSound">
-                打开声音
-              </el-button>
-              <el-button :disabled="!hasPlayer" @click="handleCloseSound">
-                关闭声音
-              </el-button>
-            </el-form-item>
           </el-form>
         </el-card>
 
@@ -168,12 +155,12 @@
             <span>接入说明</span>
           </template>
           <ol class="tips-list">
-            <li>后端自动换取萤石 accessToken，摄像头从数据库加载。</li>
-            <li>选择摄像头后即可预览、抽帧标定或开始识别。</li>
-            <li>视频加密开启时，可在验证码栏补充或修改（默认读库）。</li>
+            <li>预览经本机 go2rtc（默认 1984 端口）将 RTSP 转为 WebRTC，不走萤石公网。</li>
+            <li>识别与抽帧同样直连摄像头局域网 RTSP（camera.ip_addr + verify_code）。</li>
+            <li>请先启动 go2rtc（见 ruoyi/scripts/go2rtc.yaml.example），并确保服务器与摄像头同网。</li>
           </ol>
           <el-text type="info" size="small">
-            若列表为空，请先在数据库 camera 表配置 serial_no 与通道号。
+            若列表为空，请先在数据库 camera 表配置 serial_no、ip_addr、verify_code。
           </el-text>
           <el-text v-if="configError" type="danger" size="small" class="config-error">
             {{ configError }}
@@ -191,7 +178,13 @@
           </template>
 
           <div ref="playerShellRef" class="player-shell">
-            <div id="ezviz-monitor-player" class="player-host" />
+            <iframe
+              v-if="previewUrl"
+              :src="previewUrl"
+              class="player-host preview-frame"
+              allow="autoplay; fullscreen; microphone; camera"
+              title="lan-rtsp-preview"
+            />
             <div v-if="!hasPlayer" class="player-empty">
               <el-empty :description="emptyDescription" />
             </div>
@@ -258,10 +251,11 @@
 </template>
 
 <script setup name="MonitorScreen">
-import { useElementSize } from "@vueuse/core";
 import {
   captureProbeFrame,
-  getMonitorScreenConfig
+  getMonitorScreenConfig,
+  startLanPreview,
+  stopLanPreview
 } from "@/api/monitor/screen";
 import useLiveRecognizeStore from "@/store/modules/liveRecognize";
 
@@ -270,16 +264,12 @@ const STREAM_CODEC_NOT_H264 = 4602;
 
 const liveStore = useLiveRecognizeStore();
 
-const PLAYER_CONTAINER_ID = "ezviz-monitor-player";
-
 const { proxy } = getCurrentInstance();
 
 const configRef = ref();
 const playerShellRef = ref();
-const playerRef = shallowRef(null);
 const starting = ref(false);
 const configLoading = ref(false);
-const accessToken = ref("");
 const deviceOptions = ref([]);
 const cameraOptions = ref([]);
 const probeLoading = ref(false);
@@ -290,14 +280,16 @@ const playerStatus = ref("idle");
 const configState = ref("idle");
 const lastError = ref("");
 const configError = ref("");
+const previewUrl = ref("");
+const previewStreamName = ref("");
+const previewCameraId = ref(null);
 
 const form = reactive({
   cameraId: undefined,
   deviceSerial: "",
   channelNo: 1,
   validCode: "",
-  audioEnabled: false,
-  streamMode: "cloud_hls"
+  streamMode: "lan_rtsp"
 });
 
 const recognizeStarting = computed(() => liveStore.starting);
@@ -319,8 +311,6 @@ const rules = {
   cameraId: [{ required: true, message: "请选择摄像头", trigger: "change" }]
 };
 
-const { width: shellWidth } = useElementSize(playerShellRef);
-
 const selectedCamera = computed(() =>
   cameraOptions.value.find((item) => item.id === form.cameraId)
 );
@@ -331,26 +321,18 @@ const currentDeviceName = computed(() => {
   return camera.deviceName || camera.deviceCode || "";
 });
 
-const playUrl = computed(() => {
-  if (!form.deviceSerial) {
-    return "";
-  }
-  return `ezopen://open.ys7.com/${form.deviceSerial.toUpperCase()}/${form.channelNo}.live`;
-});
+const playUrl = computed(() => previewUrl.value || "");
 
-const hasPlayer = computed(() => Boolean(playerRef.value));
+const hasPlayer = computed(() => Boolean(previewUrl.value));
 
 const emptyDescription = computed(() => {
   if (configLoading.value) {
-    return "正在加载萤石播放配置";
-  }
-  if (!accessToken.value) {
-    return "请先刷新配置";
+    return "正在加载摄像头配置";
   }
   if (!form.cameraId || !form.deviceSerial) {
     return "请选择摄像头后开始预览";
   }
-  return "点击开始预览后显示监控画面";
+  return "点击开始预览后显示监控画面（需本机 go2rtc）";
 });
 
 const statusText = computed(() => {
@@ -422,24 +404,6 @@ const recognizeStatusTagType = computed(() => {
   return map[recognizeStatus.value] || "info";
 });
 
-async function loadPlayerConstructor() {
-  const sdkModule = await import("ezuikit-js");
-  return sdkModule.EZUIKitPlayer || sdkModule.default?.EZUIKitPlayer || sdkModule.default;
-}
-
-function resolvePlayerSize() {
-  const width = Math.max(Math.round(shellWidth.value || 960), 360);
-  const height = Math.max(Math.round((width * 9) / 16), 360);
-  return { width, height };
-}
-
-function clearPlayerContainer() {
-  const container = document.getElementById(PLAYER_CONTAINER_ID);
-  if (container) {
-    container.innerHTML = "";
-  }
-}
-
 function normalizeError(error) {
   if (!error) {
     return "未知错误";
@@ -450,13 +414,10 @@ function normalizeError(error) {
   if (error.message) {
     return error.message;
   }
-  if (error.data?.nErrorCode) {
-    return `错误码 ${error.data.nErrorCode}`;
-  }
   try {
     return JSON.stringify(error);
   } catch (jsonError) {
-    return "播放器返回了无法序列化的异常信息";
+    return "无法序列化的异常信息";
   }
 }
 
@@ -464,6 +425,7 @@ function formatCameraLabel(camera) {
   const name = camera.deviceName || camera.deviceCode || `摄像头${camera.id}`;
   const serial = (camera.serialNo || camera.deviceSerial || "").toUpperCase();
   const loc = camera.installLocation ? ` · ${camera.installLocation}` : "";
+  const ip = camera.ipAddr ? ` · ${camera.ipAddr}` : "";
   const ezviz = deviceOptions.value.find(
     (d) => (d.deviceSerial || "").toUpperCase() === serial
   );
@@ -473,7 +435,7 @@ function formatCameraLabel(camera) {
   } else if (camera.onlineStatus) {
     statusText = camera.onlineStatus === "online" ? " · 在线" : " · 离线";
   }
-  return `${name}${loc} (${serial})${statusText}`;
+  return `${name}${loc}${ip} (${serial})${statusText}`;
 }
 
 function resolveMediaUrl(url) {
@@ -484,7 +446,6 @@ function resolveMediaUrl(url) {
 }
 
 function applyScreenConfig(data) {
-  accessToken.value = data?.accessToken || "";
   deviceOptions.value = Array.isArray(data?.devices) ? data.devices : [];
   cameraOptions.value = Array.isArray(data?.cameras) ? data.cameras : [];
 
@@ -516,7 +477,7 @@ function applyCameraToForm(camera) {
 }
 
 async function fetchScreenConfig(showMessage = false) {
-  const hadConfig = Boolean(accessToken.value);
+  const hadConfig = configState.value === "ready";
   configLoading.value = true;
   configState.value = hadConfig ? "ready" : "loading";
   configError.value = "";
@@ -531,7 +492,6 @@ async function fetchScreenConfig(showMessage = false) {
   } catch (error) {
     configError.value = normalizeError(error);
     if (!hadConfig) {
-      accessToken.value = "";
       deviceOptions.value = [];
       configState.value = "error";
     } else {
@@ -545,43 +505,30 @@ async function fetchScreenConfig(showMessage = false) {
   }
 }
 
-function handleCameraChange(cameraId) {
+async function handleCameraChange(cameraId) {
   const camera = cameraOptions.value.find((item) => item.id === cameraId);
   applyCameraToForm(camera);
+  if (hasPlayer.value) {
+    await teardownPlayer("idle");
+  }
 }
 
 async function teardownPlayer(nextStatus = "stopped") {
-  const currentPlayer = playerRef.value;
-  playerRef.value = null;
-
-  if (currentPlayer) {
+  const cameraId = previewCameraId.value;
+  previewUrl.value = "";
+  previewStreamName.value = "";
+  previewCameraId.value = null;
+  if (cameraId) {
     try {
-      if (typeof currentPlayer.stop === "function") {
-        await currentPlayer.stop();
-      }
-    } catch (error) {
-      lastError.value = normalizeError(error);
-    }
-
-    try {
-      if (typeof currentPlayer.destroy === "function") {
-        await currentPlayer.destroy();
-      }
+      await stopLanPreview(cameraId);
     } catch (error) {
       lastError.value = normalizeError(error);
     }
   }
-
-  clearPlayerContainer();
   playerStatus.value = nextStatus;
 }
 
 async function handlePreview() {
-  if (!accessToken.value) {
-    proxy.$modal.msgError("尚未获取到萤石 accessToken，请先刷新配置");
-    return;
-  }
-
   const isValid = await configRef.value.validate().catch(() => false);
   if (!isValid) {
     return;
@@ -593,34 +540,26 @@ async function handlePreview() {
 
   try {
     await teardownPlayer("idle");
-    await nextTick();
-
-    const PlayerConstructor = await loadPlayerConstructor();
-    const { width, height } = resolvePlayerSize();
-
-    const player = new PlayerConstructor({
-      id: PLAYER_CONTAINER_ID,
-      accessToken: accessToken.value,
-      url: playUrl.value,
+    const response = await startLanPreview({
+      cameraId: form.cameraId,
+      deviceSerial: form.deviceSerial,
+      channelNo: form.channelNo,
       validCode: form.validCode || undefined,
-      template: "pcLive",
-      audio: form.audioEnabled,
-      autoplay: true,
-      width,
-      height,
-      handleError: (error) => {
-        playerStatus.value = "error";
-        lastError.value = normalizeError(error);
-      }
+      streamMode: "lan_rtsp"
     });
-
-    playerRef.value = player;
+    const data = response?.data || response;
+    previewUrl.value = data?.previewUrl || "";
+    previewStreamName.value = data?.streamName || "";
+    previewCameraId.value = data?.cameraId || form.cameraId;
+    if (!previewUrl.value) {
+      throw new Error("后端未返回预览地址，请确认 go2rtc 已启动");
+    }
     playerStatus.value = "playing";
-    proxy.$modal.msgSuccess("监控画面已开始预览");
+    proxy.$modal.msgSuccess("局域网预览已启动");
   } catch (error) {
     playerStatus.value = "error";
     lastError.value = normalizeError(error);
-    proxy.$modal.msgError(`播放器初始化失败：${lastError.value}`);
+    proxy.$modal.msgError(`预览失败：${lastError.value}`);
   } finally {
     starting.value = false;
   }
@@ -638,9 +577,7 @@ function syncFormFromLiveStore() {
   if (liveStore.deviceSerial) {
     form.deviceSerial = liveStore.deviceSerial;
   }
-  if (liveStore.streamMode) {
-    form.streamMode = liveStore.streamMode;
-  }
+  form.streamMode = "lan_rtsp";
 }
 
 async function handleCaptureProbe() {
@@ -653,7 +590,7 @@ async function handleCaptureProbe() {
       deviceSerial: form.deviceSerial,
       channelNo: form.channelNo,
       validCode: form.validCode || undefined,
-      streamMode: form.streamMode
+      streamMode: "lan_rtsp"
     });
     probeResult.value = res?.data || res;
     probeVisible.value = true;
@@ -676,7 +613,7 @@ async function handleStartRecognize() {
       deviceSerial: form.deviceSerial,
       channelNo: form.channelNo,
       validCode: form.validCode || undefined,
-      streamMode: form.streamMode
+      streamMode: "lan_rtsp"
     });
     syncFormFromLiveStore();
     if (liveStore.status === "running") {
@@ -700,17 +637,10 @@ async function handleStartRecognize() {
       }
     }
     if (code === STREAM_RTSP_LAN_REQUIRED) {
-      await proxy.$modal.confirm(
-        "RTSP 需要识别服务器与摄像头在同一局域网。是否切换为「公网云转发」？",
-        "RTSP 连接失败",
-        { confirmButtonText: "切换公网云转发", cancelButtonText: "取消", type: "warning" }
-      ).then(() => {
-        form.streamMode = "cloud_hls";
-        proxy.$modal.msgInfo("已切换为公网云转发，请再次点击「开始识别」");
-      }).catch(() => {});
+      proxy.$modal.msgError("RTSP 连接失败：请确认识别服务器与摄像头同网，且已开启 RTSP、填写 IP/验证码");
     } else if (code === STREAM_CODEC_NOT_H264) {
       proxy.$modal.msgError(`启动识别失败：${msg}`);
-      proxy.$modal.msgWarning("请在萤石 App 将摄像头视频编码改为 H264，或填写验证码后使用局域网 RTSP");
+      proxy.$modal.msgWarning("请在萤石 App 将摄像头视频编码改为 H264，并确认验证码正确");
     } else {
       proxy.$modal.msgError(`启动识别失败：${msg}`);
     }
@@ -731,32 +661,6 @@ async function handleStopRecognize() {
   }
 }
 
-async function handleOpenSound() {
-  if (!playerRef.value || typeof playerRef.value.openSound !== "function") {
-    proxy.$modal.msgWarning("当前播放器不支持开声操作");
-    return;
-  }
-  try {
-    await playerRef.value.openSound();
-  } catch (error) {
-    lastError.value = normalizeError(error);
-    proxy.$modal.msgError(`打开声音失败：${lastError.value}`);
-  }
-}
-
-async function handleCloseSound() {
-  if (!playerRef.value || typeof playerRef.value.closeSound !== "function") {
-    proxy.$modal.msgWarning("当前播放器不支持静音操作");
-    return;
-  }
-  try {
-    await playerRef.value.closeSound();
-  } catch (error) {
-    lastError.value = normalizeError(error);
-    proxy.$modal.msgError(`关闭声音失败：${lastError.value}`);
-  }
-}
-
 onMounted(async () => {
   await liveStore.bootstrap();
   syncFormFromLiveStore();
@@ -770,7 +674,6 @@ watch(recognizeStatus, (status, prev) => {
 });
 
 onBeforeUnmount(() => {
-  // 仅销毁预览播放器；识别任务与轮询由全局 store 维持，直到用户点击「停止识别」
   teardownPlayer("idle");
 });
 </script>
@@ -878,6 +781,12 @@ onBeforeUnmount(() => {
   .player-host {
     width: 100%;
     min-height: 420px;
+    border: 0;
+  }
+
+  .preview-frame {
+    display: block;
+    background: #000;
   }
 
   .player-empty {

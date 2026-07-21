@@ -7,6 +7,23 @@ export function getMonitorScreenConfig() {
   });
 }
 
+export function startLanPreview(data) {
+  return request({
+    url: "/monitor/screen/preview/start",
+    method: "post",
+    data,
+    timeout: 30000
+  });
+}
+
+export function stopLanPreview(cameraId) {
+  return request({
+    url: `/monitor/screen/preview/stop/${cameraId}`,
+    method: "post",
+    timeout: 15000
+  });
+}
+
 export function startLiveRecognize(data) {
   return request({
     url: "/monitor/screen/live/start",
