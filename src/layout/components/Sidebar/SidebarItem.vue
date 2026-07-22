@@ -86,8 +86,13 @@ function resolvePath(routePath, routeQuery) {
     return props.basePath
   }
   if (routeQuery) {
-    let query = JSON.parse(routeQuery);
-    return { path: getNormalPath(props.basePath + '/' + routePath), query: query }
+    try {
+      let query = JSON.parse(routeQuery)
+      return { path: getNormalPath(props.basePath + '/' + routePath), query: query }
+    } catch (e) {
+      // 兼容历史脏数据：query 误存了 routeName（非 JSON）时不阻断菜单渲染
+      return getNormalPath(props.basePath + '/' + routePath)
+    }
   }
   return getNormalPath(props.basePath + '/' + routePath)
 }
