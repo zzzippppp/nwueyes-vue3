@@ -56,11 +56,13 @@
               </div>
             </el-form-item>
 
-            <el-form-item label="设备验证码">
+            <el-form-item label="设备验证码" :required="!form.validCode">
               <el-input
                 v-model.trim="form.validCode"
                 placeholder="局域网 RTSP 密码（机身底座验证码，默认读库）"
               />
+              <el-text v-if="!form.validCode" type="danger" size="small">未检测到已配置的验证码，请输入机身底座6位字母</el-text>
+              <el-text v-else type="success" size="small">已从设备配置读取验证码</el-text>
             </el-form-item>
 
             <el-form-item label="拉流方式">
@@ -257,6 +259,7 @@ import {
   startLanPreview,
   stopLanPreview
 } from "@/api/monitor/screen";
+import request from "@/utils/request";
 import useLiveRecognizeStore from "@/store/modules/liveRecognize";
 
 const STREAM_RTSP_LAN_REQUIRED = 4601;
@@ -283,6 +286,8 @@ const configError = ref("");
 const previewUrl = ref("");
 const previewStreamName = ref("");
 const previewCameraId = ref(null);
+const playerLock = ref(false);
+let teardownPromise = null;
 
 const form = reactive({
   cameraId: undefined,
@@ -514,27 +519,42 @@ async function handleCameraChange(cameraId) {
 }
 
 async function teardownPlayer(nextStatus = "stopped") {
-  const cameraId = previewCameraId.value;
-  previewUrl.value = "";
-  previewStreamName.value = "";
-  previewCameraId.value = null;
-  if (cameraId) {
-    try {
-      await stopLanPreview(cameraId);
-    } catch (error) {
-      lastError.value = normalizeError(error);
-    }
+  if (teardownPromise) {
+    await teardownPromise;
+    return;
   }
-  playerStatus.value = nextStatus;
+
+  teardownPromise = (async () => {
+    const cameraId = previewCameraId.value;
+    previewUrl.value = "";
+    previewStreamName.value = "";
+    previewCameraId.value = null;
+    if (cameraId) {
+      try {
+        await stopLanPreview(cameraId);
+      } catch (error) {
+        lastError.value = normalizeError(error);
+      }
+    }
+    playerStatus.value = nextStatus;
+    teardownPromise = null;
+  })();
+
+  await teardownPromise;
 }
 
 async function handlePreview() {
+  if (playerLock.value) {
+    proxy.$modal.msgWarning("播放器正在初始化或销毁中，请稍候");
+    return;
+  }
   const isValid = await configRef.value.validate().catch(() => false);
   if (!isValid) {
     return;
   }
 
   starting.value = true;
+  playerLock.value = true;
   playerStatus.value = "starting";
   lastError.value = "";
 
@@ -561,6 +581,7 @@ async function handlePreview() {
     lastError.value = normalizeError(error);
     proxy.$modal.msgError(`预览失败：${lastError.value}`);
   } finally {
+    playerLock.value = false;
     starting.value = false;
   }
 }
@@ -673,8 +694,8 @@ watch(recognizeStatus, (status, prev) => {
   }
 });
 
-onBeforeUnmount(() => {
-  teardownPlayer("idle");
+onBeforeUnmount(async () => {
+  await teardownPlayer("idle");
 });
 </script>
 

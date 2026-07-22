@@ -10,6 +10,15 @@
           @keyup.enter="handleQuery"
         />
       </el-form-item>
+      <el-form-item label="设备编码" prop="deviceCode">
+        <el-input
+          v-model="queryParams.deviceCode"
+          placeholder="请输入设备编码"
+          clearable
+          style="width: 200px"
+          @keyup.enter="handleQuery"
+        />
+      </el-form-item>
       <el-form-item label="设备序列号" prop="serialNo">
         <el-input
           v-model="queryParams.serialNo"
@@ -38,7 +47,7 @@
           plain
           icon="Plus"
           @click="handleAdd"
-          v-hasPermi="['dashboard:device-info:add']"
+          v-hasPermi="['dashboard:device:add']"
         >新增</el-button>
       </el-col>
       <el-col :span="1.5">
@@ -48,7 +57,7 @@
           icon="Edit"
           :disabled="single"
           @click="handleUpdate"
-          v-hasPermi="['dashboard:device-info:edit']"
+          v-hasPermi="['dashboard:device:edit']"
         >修改</el-button>
       </el-col>
       <el-col :span="1.5">
@@ -58,7 +67,7 @@
           icon="Delete"
           :disabled="multiple"
           @click="handleDelete"
-          v-hasPermi="['dashboard:device-info:remove']"
+          v-hasPermi="['dashboard:device:remove']"
         >删除</el-button>
       </el-col>
       <el-col :span="1.5">
@@ -67,7 +76,7 @@
           plain
           icon="Download"
           @click="handleExport"
-          v-hasPermi="['dashboard:device-info:export']"
+          v-hasPermi="['dashboard:device:export']"
         >导出</el-button>
       </el-col>
       <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
@@ -96,8 +105,8 @@
       </el-table-column>
       <el-table-column label="操作" width="180" align="center" class-name="small-padding fixed-width">
         <template #default="scope">
-          <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['dashboard:device-info:edit']">修改</el-button>
-          <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['dashboard:device-info:remove']">删除</el-button>
+          <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['dashboard:device:edit']">修改</el-button>
+          <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['dashboard:device:remove']">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -161,7 +170,8 @@
         <el-row>
           <el-col :span="12">
             <el-form-item label="验证码" prop="verifyCode">
-              <el-input v-model="form.verifyCode" placeholder="未加密可留空" />
+              <el-input v-model="form.verifyCode" placeholder="机身底座6位字母，局域网RTSP密码" />
+              <el-text type="warning" size="small">局域网RTSP预览必须填写此验证码作为admin密码</el-text>
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -219,13 +229,15 @@ const data = reactive({
     pageNum: 1,
     pageSize: 10,
     deviceName: undefined,
+    deviceCode: undefined,
     serialNo: undefined,
     onlineStatus: undefined
   },
   rules: {
     deviceName: [{ required: true, message: '设备名称不能为空', trigger: 'blur' }],
     serialNo: [{ required: true, message: '设备序列号不能为空', trigger: 'blur' }],
-    channelNo: [{ required: true, message: '通道号不能为空', trigger: 'blur' }]
+    channelNo: [{ required: true, message: '通道号不能为空', trigger: 'blur' }],
+    verifyCode: [{ required: true, message: '验证码不能为空（机身底座6位字母，作为局域网RTSP密码）', trigger: 'blur' }]
   }
 })
 
