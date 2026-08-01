@@ -63,3 +63,12 @@ export function captureProbeFrame(data) {
     timeout: 120000
   });
 }
+
+export function updateDoorConfig(data) {
+  return request({
+    url: "/monitor/screen/door-config",
+    method: "post",
+    data,
+    timeout: 30000
+  });
+}

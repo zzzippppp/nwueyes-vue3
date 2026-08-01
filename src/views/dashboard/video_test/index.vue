@@ -55,7 +55,7 @@
         </div>
         <template #tip>
           <div class="el-upload__tip">
-            仅支持视频文件，单文件不超过 30MB。上传后点击「运行 YOLO 检测」查看结果（不入库）。
+            仅支持视频文件，单文件不超过 {{ MAX_VIDEO_SIZE_MB }}MB。上传后点击「运行 YOLO 检测」查看结果（不入库）。
           </div>
         </template>
       </el-upload>
@@ -101,7 +101,7 @@
     <el-card shadow="never" class="result-card">
       <template #header>
         <div class="card-header">
-          <span>测试结果（YOLO + ByteTrack）</span>
+          <span>测试结果（YOLO + ByteTrack + AI）</span>
           <el-tag size="small" :type="statusTagType">{{ statusText }}</el-tag>
         </div>
       </template>
@@ -130,12 +130,6 @@
           </el-col>
           <el-col :xs="12" :sm="8" :md="4">
             <div class="stat-box">
-              <div class="stat-label">轨迹数</div>
-              <div class="stat-value">{{ analyzeResult.uniqueTracks }}</div>
-            </div>
-          </el-col>
-          <el-col :xs="12" :sm="8" :md="4">
-            <div class="stat-box">
               <div class="stat-label">进门事件</div>
               <div class="stat-value enter">{{ analyzeResult.enterCount }}</div>
             </div>
@@ -148,8 +142,14 @@
           </el-col>
           <el-col :xs="12" :sm="8" :md="4">
             <div class="stat-box">
-              <div class="stat-label">ROI 内峰值人数</div>
-              <div class="stat-value">{{ analyzeResult.maxPersonsInRoi }}</div>
+              <div class="stat-label">路过事件</div>
+              <div class="stat-value">{{ analyzeResult.passCount || 0 }}</div>
+            </div>
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="4">
+            <div class="stat-box">
+              <div class="stat-label">轨迹数</div>
+              <div class="stat-value">{{ analyzeResult.uniqueTracks }}</div>
             </div>
           </el-col>
         </el-row>
@@ -159,13 +159,64 @@
           <el-descriptions-item label="分辨率">{{ analyzeResult.width }} × {{ analyzeResult.height }}</el-descriptions-item>
           <el-descriptions-item label="帧率">{{ analyzeResult.fps }} fps</el-descriptions-item>
           <el-descriptions-item label="过线 Y">{{ analyzeResult.lineY }}</el-descriptions-item>
-          <el-descriptions-item label="ROI" :span="2">{{ analyzeResult.roi }}</el-descriptions-item>
+          <el-descriptions-item label="门框 ROI" :span="2">{{ analyzeResult.roiDisabled ? '已禁用（仅门线）' : (analyzeResult.roi || '—') }}</el-descriptions-item>
         </el-descriptions>
 
         <div v-if="debugVideoUrl" class="preview-wrap">
           <div class="section-title">标注调试视频（检测框 + 轨迹 ID + 过线事件）</div>
           <video class="preview-video" controls :src="debugVideoUrl" />
         </div>
+
+        <div class="section-title">AI 分析（样貌 / 行为）</div>
+        <div class="ai-actions">
+          <el-button
+            type="primary"
+            :disabled="!analyzeTaskId || aiAnalyzing"
+            :loading="aiAnalyzing"
+            @click="runAiAnalysisForCurrentTask(true)"
+          >
+            {{ aiAnalysisItems.length ? '重新 AI 分析' : '运行 AI 分析' }}
+          </el-button>
+          <span class="ai-tip">基于源视频，描述人物样貌与正在做什么（通义千问 qwen3.7-plus）</span>
+        </div>
+        <el-alert
+          v-if="aiAnalyzing"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="ai-alert"
+          title="正在调用大模型分析视频，通常需要数十秒…"
+        />
+        <el-alert
+          v-if="aiError"
+          type="error"
+          :closable="true"
+          show-icon
+          class="ai-alert"
+          :title="aiError"
+          @close="aiError = ''"
+        />
+        <div v-if="aiAnalysisItems.length" class="ai-analysis-list">
+          <div v-for="item in aiAnalysisItems" :key="item.modelKey || item.modelName" class="ai-analysis-card">
+            <div class="ai-card-head">
+              <span class="ai-model">{{ item.modelName || item.modelKey || '模型' }}</span>
+              <el-tag
+                v-if="item.status && item.status !== 'success'"
+                size="small"
+                :type="item.status === 'failed' ? 'danger' : 'info'"
+              >
+                {{ item.status === 'failed' ? '失败' : (item.status || '未知') }}
+              </el-tag>
+            </div>
+            <div class="ai-section"><b>概要</b><p>{{ item.summary || '—' }}</p></div>
+            <div class="ai-meta">人数：{{ item.personCount == null ? '—' : item.personCount }}</div>
+            <div v-if="item.errorMessage" class="ai-error">{{ item.errorMessage }}</div>
+          </div>
+        </div>
+        <el-empty
+          v-else-if="!aiAnalyzing"
+          description="YOLO 完成后会自动发起 AI 分析；也可手动点击上方按钮"
+        />
 
         <div class="section-title">过线事件</div>
         <div v-if="analyzeResult" class="import-actions">
@@ -178,7 +229,7 @@
             写入行为日志
           </el-button>
           <span class="import-tip">
-            写入时使用本次分析所选摄像头（cameraId={{ analyzeCameraId || selectedCameraId || '—' }}）；与直播一致：每次过线单独抓拍择优帧
+            写入时使用本次分析所选摄像头（cameraId={{ analyzeCameraId || selectedCameraId || '—' }}）；每人取综合质量最高的人脸，监控画面为该脸所在整帧；行为含进门/出门/路过
           </span>
           <el-alert
             v-if="!hasCaptureSnapshots"
@@ -195,8 +246,11 @@
           <el-table-column prop="trackId" label="轨迹 ID" width="80" />
           <el-table-column prop="eventType" label="类型" width="80">
             <template #default="{ row }">
-              <el-tag :type="row.eventType === 'enter' ? 'success' : 'warning'" size="small">
-                {{ row.eventType === 'enter' ? '进门' : '出门' }}
+              <el-tag
+                :type="row.eventType === 'enter' ? 'success' : row.eventType === 'exit' ? 'warning' : 'info'"
+                size="small"
+              >
+                {{ row.eventType === 'enter' ? '进门' : row.eventType === 'exit' ? '出门' : '路过' }}
               </el-tag>
             </template>
           </el-table-column>
@@ -358,6 +412,98 @@
         <video class="preview-video" controls :src="lastUpload.url" />
       </div>
     </el-card>
+
+    <el-card shadow="never" class="face-compare-card">
+      <template #header>
+        <div class="card-header">
+          <span>人脸对比测试</span>
+          <el-tag size="small" type="info">同款 detect + cosine</el-tag>
+        </div>
+      </template>
+
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        class="door-config-alert"
+        title="左侧当人脸库证件照，右侧当摄像头抓拍。使用与进门匹配相同的向量抽取与余弦相似度，返回 0~1 分数。"
+      />
+
+      <el-row :gutter="16" class="face-compare-row">
+        <el-col :xs="24" :md="12">
+          <div class="face-upload-panel">
+            <div class="face-upload-title">人脸库照片</div>
+            <el-upload
+              class="face-uploader"
+              drag
+              :show-file-list="false"
+              :auto-upload="false"
+              accept="image/*"
+              :on-change="(file) => handleFaceFileChange('gallery', file)"
+            >
+              <img v-if="galleryPreviewUrl" :src="galleryPreviewUrl" class="face-preview" alt="gallery" />
+              <template v-else>
+                <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+                <div class="el-upload__text">拖拽或 <em>点击选择</em></div>
+              </template>
+            </el-upload>
+            <div v-if="galleryFile" class="face-file-name">{{ galleryFile.name }}</div>
+          </div>
+        </el-col>
+        <el-col :xs="24" :md="12">
+          <div class="face-upload-panel">
+            <div class="face-upload-title">摄像头抓拍</div>
+            <el-upload
+              class="face-uploader"
+              drag
+              :show-file-list="false"
+              :auto-upload="false"
+              accept="image/*"
+              :on-change="(file) => handleFaceFileChange('camera', file)"
+            >
+              <img v-if="cameraPreviewUrl" :src="cameraPreviewUrl" class="face-preview" alt="camera" />
+              <template v-else>
+                <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+                <div class="el-upload__text">拖拽或 <em>点击选择</em></div>
+              </template>
+            </el-upload>
+            <div v-if="cameraFile" class="face-file-name">{{ cameraFile.name }}</div>
+          </div>
+        </el-col>
+      </el-row>
+
+      <div class="face-compare-actions">
+        <el-button
+          type="primary"
+          :disabled="!galleryFile || !cameraFile || faceComparing"
+          :loading="faceComparing"
+          @click="runFaceCompare"
+        >
+          开始对比
+        </el-button>
+        <el-button :disabled="faceComparing" @click="clearFaceCompare">清空</el-button>
+      </div>
+
+      <div v-if="faceCompareResult" class="face-compare-result">
+        <div class="face-score-line">
+          <span class="face-score-label">相似度分数</span>
+          <span class="face-score-value">{{ formatFaceScore(faceCompareResult.score) }}</span>
+          <el-tag :type="faceCompareResult.matched ? 'success' : 'danger'" size="large">
+            {{ faceCompareResult.matched ? '达到阈值（可匹配）' : '未达阈值' }}
+          </el-tag>
+        </div>
+        <el-descriptions :column="2" border size="small" class="face-meta-desc">
+          <el-descriptions-item label="当前阈值">{{ faceCompareResult.threshold }}</el-descriptions-item>
+          <el-descriptions-item label="抽取模式">{{ faceCompareResult.faceEmbedMode || 'detect' }}</el-descriptions-item>
+          <el-descriptions-item label="人脸库模型">
+            {{ faceCompareResult.galleryEmbedding?.model || '—' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="摄像头模型">
+            {{ faceCompareResult.cameraEmbedding?.model || '—' }}
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+    </el-card>
   </div>
 </template>
 
@@ -365,12 +511,12 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { getPresenceDoorConfig, getVideoAnalyzeStatus, startVideoAnalyzeTest, uploadVideoTestFile, embedAnalyzeCaptures, matchAnalyzeEvents } from '@/api/dashboard/video_test'
+import { getPresenceDoorConfig, getVideoAnalyzeStatus, startVideoAnalyzeTest, uploadVideoTestFile, embedAnalyzeCaptures, matchAnalyzeEvents, compareFaces, runVideoAnalyzeAi } from '@/api/dashboard/video_test'
 import { getMonitorScreenConfig } from '@/api/monitor/screen'
 import { importBehaviorLogsFromVideo } from '@/api/dashboard/behavior_log'
 
 const apiBase = import.meta.env.VITE_APP_BASE_API || ''
-const MAX_VIDEO_SIZE_MB = 30
+const MAX_VIDEO_SIZE_MB = 200
 const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024
 
 const selectedFile = ref(null)
@@ -390,6 +536,9 @@ const analyzeTask = ref({
   resultJson: ''
 })
 const analyzeResult = ref(null)
+const aiAnalyzing = ref(false)
+const aiAnalysisItems = ref([])
+const aiError = ref('')
 const importingBehaviorLogs = ref(false)
 const embeddingCaptures = ref(false)
 const matchingEvents = ref(false)
@@ -397,6 +546,12 @@ const captureEmbedTracks = ref([])
 const embedSummary = ref('')
 const eventMatchRows = ref([])
 const matchSummary = ref('')
+const galleryFile = ref(null)
+const cameraFile = ref(null)
+const galleryPreviewUrl = ref('')
+const cameraPreviewUrl = ref('')
+const faceComparing = ref(false)
+const faceCompareResult = ref(null)
 const cameraLoading = ref(false)
 const cameraOptions = ref([])
 const selectedCameraId = ref(null)
@@ -666,6 +821,80 @@ function clearSelection() {
   uploadProgress.value = 0
 }
 
+function revokeFacePreview(side) {
+  if (side === 'gallery' && galleryPreviewUrl.value) {
+    URL.revokeObjectURL(galleryPreviewUrl.value)
+    galleryPreviewUrl.value = ''
+  }
+  if (side === 'camera' && cameraPreviewUrl.value) {
+    URL.revokeObjectURL(cameraPreviewUrl.value)
+    cameraPreviewUrl.value = ''
+  }
+}
+
+function handleFaceFileChange(side, file) {
+  const raw = file?.raw || null
+  if (!raw) return
+  const isImage = raw.type.startsWith('image/') || /\.(jpe?g|png|webp|bmp|gif)$/i.test(raw.name)
+  if (!isImage) {
+    ElMessage.error('仅支持上传图片文件')
+    return
+  }
+  if (raw.size > 15 * 1024 * 1024) {
+    ElMessage.error('单张图片不能超过 15MB')
+    return
+  }
+  revokeFacePreview(side)
+  const url = URL.createObjectURL(raw)
+  if (side === 'gallery') {
+    galleryFile.value = raw
+    galleryPreviewUrl.value = url
+  } else {
+    cameraFile.value = raw
+    cameraPreviewUrl.value = url
+  }
+  faceCompareResult.value = null
+}
+
+function clearFaceCompare() {
+  revokeFacePreview('gallery')
+  revokeFacePreview('camera')
+  galleryFile.value = null
+  cameraFile.value = null
+  faceCompareResult.value = null
+}
+
+function formatFaceScore(score) {
+  if (score == null || Number.isNaN(Number(score))) return '—'
+  return Number(score).toFixed(4)
+}
+
+async function runFaceCompare() {
+  if (!galleryFile.value || !cameraFile.value) {
+    ElMessage.warning('请先上传两张照片')
+    return
+  }
+  faceComparing.value = true
+  faceCompareResult.value = null
+  try {
+    const formData = new FormData()
+    formData.append('galleryFile', galleryFile.value)
+    formData.append('cameraFile', cameraFile.value)
+    const res = await compareFaces(formData)
+    faceCompareResult.value = unwrapTask(res)
+    if (faceCompareResult.value?.score != null) {
+      ElMessage.success(`对比完成，分数 ${formatFaceScore(faceCompareResult.value.score)}`)
+    } else {
+      ElMessage.success('对比完成')
+    }
+  } catch (e) {
+    const msg = e?.response?.data?.msg || e?.message || '人脸对比失败'
+    ElMessage.error(msg)
+  } finally {
+    faceComparing.value = false
+  }
+}
+
 function beforeUpload(file) {
   if (!file) return false
   const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|avi|mkv|flv|webm)$/i.test(file.name)
@@ -719,6 +948,70 @@ function parseResultJson(raw) {
   }
 }
 
+function syncAiAnalysisFromResult() {
+  const items = analyzeResult.value?.aiAnalysis
+  aiAnalysisItems.value = Array.isArray(items) ? items : []
+  const status = analyzeResult.value?.aiAnalysisStatus
+  if (status === 'failed' && analyzeResult.value?.aiAnalysisError) {
+    aiError.value = analyzeResult.value.aiAnalysisError
+  }
+}
+
+async function pollAiAnalysisResult(maxWaitMs = 300000) {
+  const started = Date.now()
+  while (Date.now() - started < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, 2500))
+    try {
+      const res = await getVideoAnalyzeStatus(analyzeTaskId.value)
+      const task = unwrapTask(res)
+      const result = parseResultJson(task?.resultJson)
+      if (result) {
+        analyzeResult.value = { ...(analyzeResult.value || {}), ...result }
+        syncAiAnalysisFromResult()
+      }
+      const status = result?.aiAnalysisStatus
+      if (status === 'success' || status === 'failed') {
+        return status
+      }
+      if (Array.isArray(result?.aiAnalysis) && result.aiAnalysis.length) {
+        return 'success'
+      }
+    } catch (e) {
+      // 轮询偶发失败不中断
+    }
+  }
+  return 'timeout'
+}
+
+async function runAiAnalysisForCurrentTask(manual = true) {
+  if (!analyzeTaskId.value) {
+    if (manual) ElMessage.warning('请先完成 YOLO 检测')
+    return
+  }
+  if (aiAnalyzing.value) return
+  aiAnalyzing.value = true
+  aiError.value = ''
+  try {
+    await runVideoAnalyzeAi(analyzeTaskId.value, {})
+    if (manual) ElMessage.info('AI 分析已提交，正在等待结果…')
+    const status = await pollAiAnalysisResult()
+    if (status === 'success') {
+      ElMessage.success('AI 分析完成')
+    } else if (status === 'failed') {
+      ElMessage.warning(aiError.value || 'AI 分析失败')
+    } else {
+      aiError.value = 'AI 分析等待超时，请稍后点「重新 AI 分析」或刷新查看'
+      if (manual) ElMessage.warning(aiError.value)
+    }
+  } catch (e) {
+    const msg = e?.response?.data?.msg || e?.message || 'AI 分析失败'
+    aiError.value = msg
+    if (manual) ElMessage.error(msg)
+  } finally {
+    aiAnalyzing.value = false
+  }
+}
+
 async function importBehaviorLogs() {
   if (!canImportBehaviorLogs.value) {
     ElMessage.warning('请先完成 YOLO 检测且存在过线事件')
@@ -763,6 +1056,8 @@ async function startAnalyze() {
   }
   analyzeStarting.value = true
   analyzeResult.value = null
+  aiAnalysisItems.value = []
+  aiError.value = ''
   captureEmbedTracks.value = []
   eventMatchRows.value = []
   embedSummary.value = ''
@@ -801,6 +1096,7 @@ async function pollAnalyzeOnce() {
   analyzeTask.value = { ...analyzeTask.value, ...task }
   if (task.status === 'success') {
     analyzeResult.value = parseResultJson(task.resultJson)
+    syncAiAnalysisFromResult()
     if (task.cameraId) {
       analyzeCameraId.value = task.cameraId
     } else if (analyzeResult.value?.cameraId) {
@@ -813,6 +1109,9 @@ async function pollAnalyzeOnce() {
       ElMessage.success('YOLO 检测完成')
       if (hasCaptureSnapshots.value) {
         loadEventMatches()
+      }
+      if (!aiAnalysisItems.value.length) {
+        runAiAnalysisForCurrentTask(false)
       }
     }
     stopPolling()
@@ -857,6 +1156,8 @@ function stopPolling() {
 
 onBeforeUnmount(() => {
   stopPolling()
+  revokeFacePreview('gallery')
+  revokeFacePreview('camera')
 })
 
 function formatBytes(size) {
@@ -872,6 +1173,94 @@ function formatBytes(size) {
 
 <style scoped lang="scss">
 @import '@/views/dashboard/shared/board-page.scss';
+
+.face-compare-card {
+  margin-top: 16px;
+
+  .face-compare-row {
+    margin-top: 12px;
+  }
+
+  .face-upload-panel {
+    margin-bottom: 12px;
+  }
+
+  .face-upload-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #303133;
+  }
+
+  .face-uploader {
+    width: 100%;
+
+    :deep(.el-upload) {
+      width: 100%;
+    }
+
+    :deep(.el-upload-dragger) {
+      width: 100%;
+      min-height: 200px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+  }
+
+  .face-preview {
+    max-width: 100%;
+    max-height: 220px;
+    object-fit: contain;
+    border-radius: 4px;
+  }
+
+  .face-file-name {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #909399;
+    word-break: break-all;
+  }
+
+  .face-compare-actions {
+    display: flex;
+    gap: 12px;
+    margin: 8px 0 16px;
+    flex-wrap: wrap;
+  }
+
+  .face-compare-result {
+    padding: 12px;
+    background: #fafafa;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+  }
+
+  .face-score-line {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .face-score-label {
+    color: #606266;
+    font-size: 14px;
+  }
+
+  .face-score-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #303133;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .face-meta-desc {
+    max-width: 720px;
+  }
+}
 
 .video-test-page {
   display: flex;
@@ -965,6 +1354,77 @@ function formatBytes(size) {
     gap: 12px;
     margin-bottom: 8px;
     flex-wrap: wrap;
+  }
+
+  .ai-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+
+  .ai-tip {
+    color: #909399;
+    font-size: 12px;
+  }
+
+  .ai-alert {
+    margin-bottom: 10px;
+  }
+
+  .ai-analysis-list {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .ai-analysis-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #fafafa;
+  }
+
+  .ai-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .ai-model {
+    font-weight: 600;
+    color: #303133;
+  }
+
+  .ai-section {
+    margin-bottom: 8px;
+
+    b {
+      display: block;
+      margin-bottom: 4px;
+      color: #606266;
+      font-size: 13px;
+    }
+
+    p {
+      margin: 0;
+      line-height: 1.55;
+      color: #303133;
+      white-space: pre-wrap;
+    }
+  }
+
+  .ai-meta {
+    font-size: 13px;
+    color: #606266;
+  }
+
+  .ai-error {
+    margin-top: 6px;
+    color: #f56c6c;
+    font-size: 13px;
   }
 
   .import-tip {

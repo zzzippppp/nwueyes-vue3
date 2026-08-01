@@ -5,8 +5,8 @@
       <div class="stat-card is-blue">
         <div class="stat-card-icon"><el-icon :size="60"><Calendar /></el-icon></div>
         <div class="stat-card-label">考勤人数</div>
-        <div class="stat-card-value">{{ summary.sessionCount ?? 0 }}</div>
-        <div class="stat-card-desc">已知 {{ summary.knownVisitorCount ?? 0 }} · 陌生 {{ summary.strangerVisitorCount ?? 0 }}</div>
+        <div class="stat-card-value">{{ (summary.knownVisitorCount ?? 0) + (summary.strangerVisitorCount ?? 0) }}</div>
+        <div class="stat-card-desc">在场 {{ summary.openSessionCount ?? 0 }} · 已离 {{ ((summary.knownVisitorCount ?? 0) + (summary.strangerVisitorCount ?? 0)) - (summary.openSessionCount ?? 0) }} · 陌生 {{ summary.strangerVisitorCount ?? 0 }}</div>
       </div>
       <div class="stat-card is-green">
         <div class="stat-card-icon"><el-icon :size="60"><View /></el-icon></div>
