@@ -60,11 +60,11 @@
         <el-table-column prop="typeName" label="设备类型" min-width="110">
           <template #default="{ row }">{{ row.typeName || '—' }}</template>
         </el-table-column>
-        <el-table-column label="识别/在线状态" min-width="160">
+        <el-table-column label="识别/在线状态" min-width="180">
           <template #default="{ row }">
             <div class="status-cell">
-              <el-tag :type="onlineTagType(row)" size="small">{{ onlineLabel(row) }}</el-tag>
               <el-tag :type="recognizeTagType(row)" size="small">{{ recognizeLabel(row) }}</el-tag>
+              <el-tag :type="onlineTagType(row)" size="small">{{ onlineLabel(row) }}</el-tag>
             </div>
           </template>
         </el-table-column>
@@ -139,27 +139,36 @@ function onlineTagType(row) {
 }
 
 function isRecognizingCamera(row) {
-  if (!liveStore.active || !row?.id) return false
-  return Number(liveStore.cameraId) === Number(row.id)
+  if (!row?.id) return false
+  const byCameraId = liveStore.cameraId != null && Number(liveStore.cameraId) === Number(row.id)
+  const rowSerial = String(row.serialNo || row.deviceSerial || '').toUpperCase()
+  const storeSerial = String(liveStore.deviceSerial || '').toUpperCase()
+  const bySerial = !!rowSerial && !!storeSerial && rowSerial === storeSerial
+  if (!byCameraId && !bySerial) return false
+  // starting 过程中 taskId 可能尚未回填，也要立刻反映到列表
+  return liveStore.active || liveStore.starting || liveStore.status === 'starting' || liveStore.status === 'running' || liveStore.status === 'reconnecting'
 }
 
 function recognizeLabel(row) {
-  if (!isRecognizingCamera(row)) {
-    if (liveStore.status === 'failed' && Number(liveStore.cameraId) === Number(row.id)) {
-      return '异常'
-    }
-    return '未启动'
+  if (isRecognizingCamera(row)) {
+    if (liveStore.status === 'starting' || liveStore.starting) return '启动中'
+    if (liveStore.status === 'reconnecting') return '重连中'
+    if (liveStore.status === 'running') return '运行中'
+    if (liveStore.status === 'failed') return '异常'
   }
-  if (liveStore.status === 'starting') return '启动中'
-  if (liveStore.status === 'running') return '运行中'
-  if (liveStore.status === 'failed') return '异常'
+  if (liveStore.status === 'failed' && (
+    (liveStore.cameraId != null && Number(liveStore.cameraId) === Number(row.id))
+    || (String(row.serialNo || '').toUpperCase() === String(liveStore.deviceSerial || '').toUpperCase() && liveStore.deviceSerial)
+  )) {
+    return '异常'
+  }
   return '未启动'
 }
 
 function recognizeTagType(row) {
   const label = recognizeLabel(row)
   if (label === '运行中') return 'success'
-  if (label === '启动中') return 'warning'
+  if (label === '启动中' || label === '重连中') return 'warning'
   if (label === '异常') return 'danger'
   return 'info'
 }

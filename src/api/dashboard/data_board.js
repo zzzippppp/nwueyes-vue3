@@ -62,6 +62,24 @@ export function updateDataBoardLocation(locationId, data) {
   })
 }
 
+export function mergeStrangerToPerson(trackKey, targetPersonId) {
+  return request({
+    url: `/dashboard/data-board/strangers/${encodeURIComponent(trackKey)}/merge`,
+    method: 'post',
+    data: { targetPersonId }
+  })
+}
+
+export function searchPersons(keyword = ' ') {
+  // RuoYi 的 tansParams 会过滤空字符串，预加载人员列表时传空格占位
+  const q = keyword === '' || keyword == null ? ' ' : keyword
+  return request({
+    url: '/dashboard/data-board/persons/search',
+    method: 'get',
+    params: { keyword: q }
+  })
+}
+
 export function uploadDataBoardFace(formData) {
   return request({
     url: '/dashboard/data-board/persons/upload-face',

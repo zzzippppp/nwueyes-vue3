@@ -18,7 +18,12 @@ function loadStorage() {
 
 function saveStorage(payload) {
   try {
-    if (!payload?.taskId) {
+    if (!payload) {
+      sessionStorage.removeItem(STORAGE_KEY)
+      return
+    }
+    // 允许启动瞬间尚无 taskId，但仍保留 cameraId/status
+    if (!payload.taskId && !payload.cameraId) {
       sessionStorage.removeItem(STORAGE_KEY)
       return
     }
@@ -41,32 +46,34 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
       starting: false,
       stopping: false,
       pollTimer: null,
+      activeProbeTimer: null,
       bootstrapped: false,
       logTail: ''
     }
   },
   getters: {
     running(state) {
-      return state.status === 'running' || state.status === 'starting'
+      return state.status === 'running' || state.status === 'starting' || state.status === 'reconnecting'
     },
     active(state) {
-      return !!state.taskId && (state.status === 'running' || state.status === 'starting')
+      return !!state.taskId && (state.status === 'running' || state.status === 'starting' || state.status === 'reconnecting')
     }
   },
   actions: {
     persist() {
-      if (this.active) {
+      // 有任务，或启动中已确定摄像头：都写入，保证列表能匹配识别状态
+      if (this.taskId || (this.cameraId != null && (this.status === 'starting' || this.status === 'reconnecting' || this.starting))) {
         saveStorage({
-          taskId: this.taskId,
+          taskId: this.taskId || '',
           status: this.status,
           message: this.message,
           deviceSerial: this.deviceSerial,
           cameraId: this.cameraId,
           streamMode: this.streamMode
         })
-      } else {
-        saveStorage(null)
+        return
       }
+      saveStorage(null)
     },
 
     applyTask(task) {
@@ -74,11 +81,8 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
         return
       }
       if (task.status === 'not_found') {
-        this.taskId = ''
-        this.status = 'idle'
+        // 不立刻清空：留给 poll/sync 再查一次 /live/active（后端可能已自动换新 task）
         this.message = task.message || '任务不存在或已过期'
-        this.stopPoll()
-        this.persist()
         return
       }
       if (task.taskId) {
@@ -124,14 +128,53 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
       }, 3000)
     },
 
+    startActiveProbe() {
+      if (this.activeProbeTimer) {
+        return
+      }
+      // 后端开机续跑/自动重启后，页面即使当时是「未启动」也能跟上
+      this.activeProbeTimer = setInterval(() => {
+        this.syncFromServer()
+      }, 5000)
+    },
+
     async pollOnce() {
       if (!this.taskId) {
         this.stopPoll()
+        await this.syncFromServer()
         return
       }
       try {
+        if (this.taskId === 'pending_resume') {
+          await this.syncFromServer()
+          return
+        }
         const response = await getLiveRecognizeStatus(this.taskId)
+        if (response.data?.status === 'not_found') {
+          const active = await getActiveLiveRecognize()
+          if (active.data?.taskId) {
+            this.applyTask(active.data)
+            return
+          }
+          this.taskId = ''
+          this.status = 'idle'
+          this.message = response.data?.message || '任务不存在或已过期'
+          this.stopPoll()
+          this.persist()
+          return
+        }
         this.applyTask(response.data)
+        // 自动重启会换新 taskId：旧任务停在 reconnecting 时改跟 active
+        if (this.status === 'reconnecting') {
+          try {
+            const active = await getActiveLiveRecognize()
+            if (active.data?.taskId && active.data.taskId !== this.taskId) {
+              this.applyTask(active.data)
+            }
+          } catch {
+            // ignore
+          }
+        }
       } catch (error) {
         const msg = error?.response?.data?.msg || error?.message || '状态查询失败'
         this.message = msg
@@ -158,23 +201,40 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
         const active = await getActiveLiveRecognize()
         if (active.data?.taskId) {
           this.applyTask(active.data)
-          return
+          return true
         }
       } catch {
         // ignore
       }
-      if (this.taskId) {
+      if (this.taskId && this.taskId !== 'pending_resume') {
         try {
           const response = await getLiveRecognizeStatus(this.taskId)
+          if (response.data?.status === 'not_found') {
+            this.taskId = ''
+            this.status = 'idle'
+            this.message = response.data?.message || ''
+            this.stopPoll()
+            this.persist()
+            return false
+          }
           this.applyTask(response.data)
+          return this.active
         } catch {
           // keep local session until explicit stop or not_found
         }
+      } else if (!this.active && this.status !== 'idle' && this.status !== 'stopped' && this.status !== 'failed') {
+        // 服务端已无活跃任务
+        this.taskId = ''
+        this.status = 'idle'
+        this.stopPoll()
+        this.persist()
       }
+      return false
     },
 
     async bootstrap() {
       if (this.bootstrapped) {
+        this.startActiveProbe()
         if (this.active) {
           this.startPoll()
         }
@@ -182,6 +242,7 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
       }
       this.bootstrapped = true
       await this.syncFromServer()
+      this.startActiveProbe()
       if (this.active) {
         this.startPoll()
       }
@@ -190,15 +251,28 @@ const useLiveRecognizeStore = defineStore('liveRecognize', {
     async startRecognize(payload) {
       this.starting = true
       this.message = ''
+      // 先写入请求参数，避免接口未回传 cameraId 时列表一直显示「未启动」
+      if (payload?.cameraId != null) {
+        this.cameraId = payload.cameraId
+      }
+      if (payload?.deviceSerial) {
+        this.deviceSerial = payload.deviceSerial
+      }
+      this.status = 'starting'
+      this.persist()
       try {
         const response = await startLiveRecognize({
           ...payload,
           streamMode: 'lan_rtsp'
         })
         this.applyTask(response.data)
+        if (payload?.cameraId != null && !this.cameraId) {
+          this.cameraId = payload.cameraId
+        }
         if (this.taskId) {
           this.startPoll()
         }
+        this.persist()
         return response.data
       } finally {
         this.starting = false

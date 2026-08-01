@@ -50,3 +50,26 @@ export function matchAnalyzeEvents(taskId) {
     timeout: 600000
   })
 }
+
+/** 对 YOLO 分析任务源视频做 AI 样貌/行为理解 */
+export function runVideoAnalyzeAi(taskId, data = {}) {
+  return request({
+    url: `/ingest/presence/analyze/ai/${taskId}`,
+    method: 'post',
+    data,
+    timeout: 60000
+  })
+}
+
+/** 两张人脸对比：gallery=人脸库，camera=摄像头抓拍 */
+export function compareFaces(formData) {
+  return request({
+    url: '/ingest/presence/face-compare',
+    method: 'post',
+    data: formData,
+    timeout: 180000,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+}

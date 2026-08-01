@@ -207,44 +207,94 @@
       </el-col>
     </el-row>
 
-    <el-dialog v-model="probeVisible" title="门线标定抽帧" width="720px" destroy-on-close>
+    <el-dialog
+      v-model="probeVisible"
+      title="门框与门线标定"
+      width="1120px"
+      top="4vh"
+      destroy-on-close
+      @opened="openCalibrationEditor"
+    >
       <div v-if="probeResult" class="probe-dialog-body">
         <el-alert
-          type="info"
+          type="warning"
           :closable="false"
           show-icon
-          title="请使用「原图」在 1920×1080 坐标系下标注 line_y 与 roi，写回 camera 表或设备管理。"
+          title="请先用红色矩形标注门框区域，再用蓝色横线标注门线。系统以人员脚点跨过蓝线作为一次进门或出门事件。"
         />
-        <div class="probe-meta">
-          <span>分辨率：{{ probeResult.width }}×{{ probeResult.height }}</span>
-          <span v-if="probeResult.lineY">当前门线 Y：{{ probeResult.lineY }}</span>
-          <span v-if="probeResult.roi">ROI：{{ probeResult.roi }}</span>
-        </div>
-        <div class="probe-images">
-          <div class="probe-image-block">
-            <div class="probe-image-title">原图（用于标注）</div>
+
+        <div class="calibration-guide">
+          <div class="guide-copy">
+            <div class="guide-title">标注说明</div>
+            <div class="guide-item">
+              <span class="guide-swatch guide-swatch-roi" />
+              <span><b>红色门框：</b>框住人员通过门口时会出现的有效区域。</span>
+            </div>
+            <div class="guide-item">
+              <span class="guide-swatch guide-swatch-line" />
+              <span><b>蓝色门线：</b>放在门槛附近，人员脚点跨线时计为一次进出门事件。</span>
+            </div>
+            <div class="guide-note">建议门线横穿红框，且避开画面边缘、阴影和容易遮挡的位置。</div>
+          </div>
+          <div class="example-card">
+            <div class="example-title">实验室门口正确标注示例</div>
             <el-image
-              v-if="probeResult.rawImageUrl"
-              :src="resolveMediaUrl(probeResult.rawImageUrl)"
-              :preview-src-list="[resolveMediaUrl(probeResult.rawImageUrl)]"
+              :src="doorCalibrationExample"
+              :preview-src-list="[doorCalibrationExample]"
+              preview-teleported
               fit="contain"
-              class="probe-image"
+              class="example-image"
             />
           </div>
-          <div v-if="probeResult.overlayImageUrl" class="probe-image-block">
-            <div class="probe-image-title">叠加当前门线/ROI</div>
-            <el-image
-              :src="resolveMediaUrl(probeResult.overlayImageUrl)"
-              :preview-src-list="[resolveMediaUrl(probeResult.overlayImageUrl)]"
-              fit="contain"
-              class="probe-image"
-            />
+        </div>
+
+        <div class="calibration-toolbar">
+          <div class="tool-buttons">
+            <el-button
+              :type="calibrationTool === 'roi' ? 'danger' : 'default'"
+              :plain="calibrationTool !== 'roi'"
+              icon="Crop"
+              @click="calibrationTool = 'roi'"
+            >
+              画红色门框
+            </el-button>
+            <el-button
+              :type="calibrationTool === 'line' ? 'primary' : 'default'"
+              :plain="calibrationTool !== 'line'"
+              icon="Minus"
+              @click="calibrationTool = 'line'"
+            >
+              画蓝色门线
+            </el-button>
+          </div>
+          <div class="probe-meta">
+            <el-tag type="info">分辨率 {{ probeResult.width }}×{{ probeResult.height }}</el-tag>
+            <el-tag type="danger">门框 {{ calibrationRoiText || '未标注' }}</el-tag>
+            <el-tag type="primary">门线 Y={{ calibration.lineY ?? '未标注' }}</el-tag>
           </div>
         </div>
-        <div class="probe-path">
-          本地路径：{{ storageRootHint }}/log_library/probe/camera_{{ probeResult.cameraId }}_raw.jpg
+
+        <div class="calibration-stage" :class="`tool-${calibrationTool}`">
+          <canvas
+            ref="calibrationCanvasRef"
+            class="calibration-canvas"
+            @pointerdown="handleCalibrationPointerDown"
+            @pointermove="handleCalibrationPointerMove"
+            @pointerup="handleCalibrationPointerUp"
+            @pointercancel="handleCalibrationPointerUp"
+          />
+        </div>
+        <div class="calibration-hint">
+          当前工具：{{ calibrationTool === 'roi' ? '按住并拖动鼠标画红色门框' : '在图片上单击或拖动确定蓝色门线高度' }}
         </div>
       </div>
+      <template #footer>
+        <el-button @click="resetCalibration">恢复当前配置</el-button>
+        <el-button @click="probeVisible = false">取消</el-button>
+        <el-button type="primary" :loading="calibrationSaving" @click="saveCalibration">
+          保存标定
+        </el-button>
+      </template>
     </el-dialog>
     </div>
   </el-drawer>
@@ -255,9 +305,11 @@ import {
   captureProbeFrame,
   getMonitorScreenConfig,
   startLanPreview,
-  stopLanPreview
+  stopLanPreview,
+  updateDoorConfig
 } from "@/api/monitor/screen";
 import useLiveRecognizeStore from "@/store/modules/liveRecognize";
+import doorCalibrationExample from "@/assets/images/door-calibration-example.jpg";
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -289,6 +341,20 @@ const probeLoading = ref(false);
 const probeVisible = ref(false);
 const probeResult = ref(null);
 const storageRootHint = ref("storageRoot");
+const calibrationCanvasRef = ref(null);
+const calibrationImageRef = ref(null);
+const calibrationTool = ref("roi");
+const calibrationSaving = ref(false);
+const calibration = reactive({
+  roi: null,
+  lineY: null,
+  startX: 0,
+  startY: 0,
+  dragging: false
+});
+const calibrationRoiText = computed(() =>
+  Array.isArray(calibration.roi) ? calibration.roi.map((v) => Math.round(v)).join(",") : ""
+);
 const playerStatus = ref("idle");
 const configState = ref("idle");
 const lastError = ref("");
@@ -390,13 +456,18 @@ const configStatusType = computed(() => {
   return tagTypeMap[configState.value] || "info";
 });
 
-const recognizeRunning = computed(() => recognizeStatus.value === "running" || recognizeStatus.value === "starting");
+const recognizeRunning = computed(() =>
+  recognizeStatus.value === "running"
+  || recognizeStatus.value === "starting"
+  || recognizeStatus.value === "reconnecting"
+);
 
 const recognizeStatusText = computed(() => {
   const map = {
     idle: "未启动",
     starting: "启动中",
     running: "识别中",
+    reconnecting: "重连中",
     stopped: "已停止",
     failed: "异常结束",
     success: "已结束"
@@ -410,6 +481,7 @@ const recognizeStatusTagType = computed(() => {
     idle: "info",
     starting: "warning",
     running: "success",
+    reconnecting: "warning",
     stopped: "info",
     failed: "danger",
     success: "info"
@@ -598,9 +670,198 @@ function syncFormFromLiveStore() {
   form.streamMode = "lan_rtsp";
 }
 
+function parseCalibrationRoi(raw) {
+  if (!raw) return null;
+  const parts = String(raw).split(",").map(Number);
+  if (parts.length !== 4 || parts.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+  return parts;
+}
+
+function resetCalibration() {
+  const sourceRoi = probeResult.value?.roi || selectedCamera.value?.roi || "";
+  const sourceLineY = probeResult.value?.lineY ?? selectedCamera.value?.lineY ?? null;
+  calibration.roi = parseCalibrationRoi(sourceRoi);
+  calibration.lineY = sourceLineY == null ? null : Number(sourceLineY);
+  calibration.dragging = false;
+  redrawCalibrationCanvas();
+}
+
+function openCalibrationEditor() {
+  calibrationImageRef.value = null;
+  resetCalibration();
+  const canvas = calibrationCanvasRef.value;
+  const rawImageUrl = resolveMediaUrl(probeResult.value?.rawImageUrl);
+  if (!canvas || !rawImageUrl) return;
+
+  const width = Number(probeResult.value?.width || selectedCamera.value?.refWidth || 1920);
+  const height = Number(probeResult.value?.height || selectedCamera.value?.refHeight || 1080);
+  canvas.width = width;
+  canvas.height = height;
+
+  const image = new Image();
+  image.onload = () => {
+    calibrationImageRef.value = image;
+    redrawCalibrationCanvas();
+  };
+  image.onerror = () => {
+    proxy.$modal.msgError("标定图片加载失败，请重新抽帧");
+  };
+  image.src = rawImageUrl;
+}
+
+function calibrationPoint(event) {
+  const canvas = calibrationCanvasRef.value;
+  if (!canvas) return null;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const x = Math.max(0, Math.min(canvas.width - 1, ((event.clientX - rect.left) * canvas.width) / rect.width));
+  const y = Math.max(0, Math.min(canvas.height - 1, ((event.clientY - rect.top) * canvas.height) / rect.height));
+  return { x, y };
+}
+
+function handleCalibrationPointerDown(event) {
+  const point = calibrationPoint(event);
+  if (!point) return;
+  event.currentTarget?.setPointerCapture?.(event.pointerId);
+  if (calibrationTool.value === "line") {
+    calibration.lineY = Math.round(point.y);
+    calibration.dragging = true;
+  } else {
+    calibration.startX = point.x;
+    calibration.startY = point.y;
+    calibration.roi = [point.x, point.y, point.x, point.y];
+    calibration.dragging = true;
+  }
+  redrawCalibrationCanvas();
+}
+
+function handleCalibrationPointerMove(event) {
+  if (!calibration.dragging) return;
+  const point = calibrationPoint(event);
+  if (!point) return;
+  if (calibrationTool.value === "line") {
+    calibration.lineY = Math.round(point.y);
+  } else {
+    calibration.roi = [calibration.startX, calibration.startY, point.x, point.y];
+  }
+  redrawCalibrationCanvas();
+}
+
+function handleCalibrationPointerUp(event) {
+  if (!calibration.dragging) return;
+  if (calibrationTool.value === "roi" && Array.isArray(calibration.roi)) {
+    const [x1, y1, x2, y2] = calibration.roi;
+    calibration.roi = [
+      Math.round(Math.min(x1, x2)),
+      Math.round(Math.min(y1, y2)),
+      Math.round(Math.max(x1, x2)),
+      Math.round(Math.max(y1, y2))
+    ];
+  }
+  calibration.dragging = false;
+  event.currentTarget?.releasePointerCapture?.(event.pointerId);
+  redrawCalibrationCanvas();
+}
+
+function redrawCalibrationCanvas() {
+  const canvas = calibrationCanvasRef.value;
+  const image = calibrationImageRef.value;
+  if (!canvas || !image) return;
+  const context = canvas.getContext("2d");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  const scale = Math.max(1, canvas.width / 960);
+  if (Array.isArray(calibration.roi)) {
+    const [x1, y1, x2, y2] = calibration.roi;
+    context.save();
+    context.strokeStyle = "#ef4444";
+    context.lineWidth = 4 * scale;
+    context.setLineDash([12 * scale, 7 * scale]);
+    context.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    context.setLineDash([]);
+    context.fillStyle = "rgba(239, 68, 68, 0.92)";
+    context.font = `700 ${14 * scale}px sans-serif`;
+    context.fillText("门框 ROI", x1 + 8 * scale, Math.max(20 * scale, y1 - 8 * scale));
+    context.restore();
+  }
+
+  if (calibration.lineY != null) {
+    const lineStart = Array.isArray(calibration.roi) ? calibration.roi[0] : 0;
+    const lineEnd = Array.isArray(calibration.roi) ? calibration.roi[2] : canvas.width;
+    context.save();
+    context.strokeStyle = "#2563eb";
+    context.lineWidth = 5 * scale;
+    context.beginPath();
+    context.moveTo(lineStart, calibration.lineY);
+    context.lineTo(lineEnd, calibration.lineY);
+    context.stroke();
+    context.fillStyle = "rgba(37, 99, 235, 0.94)";
+    context.font = `700 ${14 * scale}px sans-serif`;
+    context.fillText(
+      `门线 Y=${Math.round(calibration.lineY)}`,
+      lineStart + 8 * scale,
+      Math.max(20 * scale, calibration.lineY - 10 * scale)
+    );
+    context.restore();
+  }
+}
+
+async function saveCalibration() {
+  if (!Array.isArray(calibration.roi)) {
+    proxy.$modal.msgWarning("请先用红色矩形标注门框区域");
+    return;
+  }
+  const [x1, y1, x2, y2] = calibration.roi.map(Math.round);
+  if (x2 - x1 < 10 || y2 - y1 < 10) {
+    proxy.$modal.msgWarning("门框区域过小，请重新拖动标注");
+    return;
+  }
+  if (calibration.lineY == null) {
+    proxy.$modal.msgWarning("请再用蓝色横线标注门线");
+    return;
+  }
+
+  calibrationSaving.value = true;
+  try {
+    const response = await updateDoorConfig({
+      cameraId: form.cameraId,
+      lineY: Math.round(calibration.lineY),
+      roi: [x1, y1, x2, y2].join(","),
+      refWidth: Number(probeResult.value.width),
+      refHeight: Number(probeResult.value.height)
+    });
+    const updated = response?.data || response;
+    if (selectedCamera.value && updated) {
+      Object.assign(selectedCamera.value, updated);
+    }
+    if (props.camera && updated) {
+      Object.assign(props.camera, updated);
+    }
+    probeResult.value.lineY = Math.round(calibration.lineY);
+    probeResult.value.roi = [x1, y1, x2, y2].join(",");
+    redrawCalibrationCanvas();
+    proxy.$modal.msgSuccess("门框和门线已保存，后续识别将使用新标定");
+    probeVisible.value = false;
+  } catch (error) {
+    proxy.$modal.msgError(`保存标定失败：${normalizeError(error)}`);
+  } finally {
+    calibrationSaving.value = false;
+  }
+}
+
 async function handleCaptureProbe() {
-  const isValid = await configRef.value.validate().catch(() => false);
-  if (!isValid) return;
+  if (!form.cameraId) {
+    proxy.$modal.msgWarning("请先在详情里确认已选择摄像头");
+    return;
+  }
+  const isValid = await configRef.value?.validate?.().catch(() => false);
+  if (!isValid) {
+    proxy.$modal.msgWarning("请先完善摄像头配置后再抽帧");
+    return;
+  }
   probeLoading.value = true;
   try {
     const res = await captureProbeFrame({
@@ -612,7 +873,7 @@ async function handleCaptureProbe() {
     });
     probeResult.value = res?.data || res;
     probeVisible.value = true;
-    proxy.$modal.msgSuccess(probeResult.value?.message || "抽帧成功");
+    proxy.$modal.msgSuccess("已抽取当前监控帧，请完成门框和门线标注");
   } catch (error) {
     proxy.$modal.msgError(`抽帧失败：${normalizeError(error)}`);
   } finally {
@@ -636,7 +897,7 @@ async function handleStartRecognize() {
     syncFormFromLiveStore();
     if (liveStore.status === "running") {
       proxy.$modal.msgSuccess("直播识别已启动");
-    } else if (liveStore.status === "starting") {
+    } else if (liveStore.status === "starting" || liveStore.status === "reconnecting") {
       proxy.$modal.msgSuccess("正在连接直播流，请稍候…");
     }
     if (task?.status === "failed" && task?.message) {
@@ -870,35 +1131,113 @@ onBeforeUnmount(() => {
     gap: 12px;
   }
 
-  .probe-meta {
+  .calibration-guide {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
+    gap: 14px;
+    align-items: stretch;
+  }
+
+  .guide-copy,
+  .example-card {
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 10px;
+    padding: 12px;
+    background: var(--el-fill-color-blank);
+  }
+
+  .guide-title,
+  .example-title {
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .guide-item {
     display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
+    gap: 8px;
+    align-items: flex-start;
+    margin-bottom: 8px;
     font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .guide-note {
+    font-size: 12px;
     color: var(--el-text-color-secondary);
   }
 
-  .probe-images {
-    display: grid;
-    gap: 16px;
+  .guide-swatch {
+    width: 14px;
+    height: 14px;
+    margin-top: 3px;
+    border-radius: 3px;
+    flex: 0 0 auto;
   }
 
-  .probe-image-title {
-    margin-bottom: 8px;
-    font-size: 13px;
-    font-weight: 600;
+  .guide-swatch-roi {
+    background: #ef4444;
   }
 
-  .probe-image {
+  .guide-swatch-line {
+    background: #2563eb;
+  }
+
+  .example-image {
     width: 100%;
-    max-height: 360px;
+    height: 140px;
     background: #0f172a;
   }
 
-  .probe-path {
+  .calibration-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .tool-buttons,
+  .probe-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .calibration-stage {
+    overflow: auto;
+    max-height: min(58vh, 620px);
+    border: 1px solid var(--el-border-color);
+    border-radius: 10px;
+    background: #0f172a;
+  }
+
+  .calibration-stage.tool-roi {
+    cursor: crosshair;
+  }
+
+  .calibration-stage.tool-line {
+    cursor: ns-resize;
+  }
+
+  .calibration-canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .calibration-hint {
     font-size: 12px;
     color: var(--el-text-color-secondary);
-    word-break: break-all;
+  }
+
+  @media (max-width: 960px) {
+    .calibration-guide {
+      grid-template-columns: 1fr;
+    }
   }
 }
 </style>

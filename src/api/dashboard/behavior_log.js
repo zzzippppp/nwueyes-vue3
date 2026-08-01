@@ -29,7 +29,7 @@ export function runAiAnalysis(data) {
     url: '/dashboard/behavior-log/analysis/run',
     method: 'post',
     data,
-    timeout: 30000
+    timeout: 60000
   })
 }
 

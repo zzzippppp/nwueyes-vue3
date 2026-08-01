@@ -1,6 +1,6 @@
 <template>
   <div class="app-container board-page">
-    <el-form ref="queryRef" :inline="true" class="query-form">
+    <el-form ref="queryRef" :inline="true" class="query-form" v-show="showSearch">
       <el-form-item label="人名" prop="displayName">
         <el-input
           v-model="sessionFilters.displayName"
@@ -58,22 +58,31 @@
       </el-form-item>
       <el-form-item>
         <el-button type="primary" icon="Search" :loading="loading" @click="handleQuery">搜索</el-button>
-        <el-button icon="RefreshRight" :loading="loading" @click="handleRefresh">刷新</el-button>
         <el-button icon="Refresh" @click="resetQuery">重置</el-button>
       </el-form-item>
     </el-form>
 
-    <AttendanceStatPanel title="考勤信息" :cards="statCards">
-      <template #extra>
-        <div class="panel-extra">
-          <el-text type="info" size="small">展示人脸档案全部人员，以及所选时段内曾进门的未登记人员；按停留时长倒序</el-text>
-          <el-tag type="info" size="small">每 30 秒自动刷新</el-tag>
-        </div>
-      </template>
-    </AttendanceStatPanel>
+    <el-row :gutter="10" class="mb8">
+      <el-col :span="1.5">
+        <el-button type="primary" plain icon="Plus" @click="handleAdd">新增</el-button>
+      </el-col>
+      <el-col :span="1.5">
+        <el-button type="success" plain icon="Edit" :disabled="!currentRow" @click="handleUpdate()">修改</el-button>
+      </el-col>
+      <el-col :span="1.5">
+        <el-button type="primary" plain icon="RefreshRight" :loading="loading" @click="handleRefresh">刷新</el-button>
+      </el-col>
+      <right-toolbar v-model:showSearch="showSearch" @queryTable="handleRefresh" />
+    </el-row>
 
-    <div class="table-wrap">
-      <el-table v-loading="loading" :data="attendanceRows" class="board-table">
+    <div class="table-wrap list-table-wrap">
+      <el-table
+        v-loading="loading"
+        :data="pagedAttendanceRows"
+        class="board-table"
+        highlight-current-row
+        @current-change="row => (currentRow = row)"
+      >
         <el-table-column prop="personId" label="ID" min-width="70" />
         <el-table-column prop="locationName" label="地点" min-width="120">
           <template #default="{ row }">{{ row.locationName || '—' }}</template>
@@ -104,62 +113,156 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100" align="center" fixed="right" class-name="small-padding fixed-width">
+        <el-table-column label="操作" width="160" align="center" fixed="right" class-name="small-padding fixed-width">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+            <el-button link type="primary" icon="View" @click="openDetail(row)">详情</el-button>
+            <el-button link type="primary" icon="Edit" @click="handleUpdate(row)">修改</el-button>
           </template>
         </el-table-column>
       </el-table>
     </div>
 
-    <el-dialog v-model="detailVisible" title="考勤详情" width="560px">
-      <el-descriptions v-if="detailRow" :column="1" border>
-        <el-descriptions-item label="姓名">{{ detailRow.displayName }}</el-descriptions-item>
-        <el-descriptions-item label="学工号">{{ detailRow.employeeNo || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="人员类型">{{ formatPersonKindLabel(detailRow.personKind) }}</el-descriptions-item>
-        <el-descriptions-item label="状态">
-          <el-tag :type="attendanceStatusTagType(detailRow.attendanceStatus)" size="small">
-            {{ formatAttendanceStatus(detailRow.attendanceStatus) }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="进出次数">{{ detailRow.passageCount ?? 0 }}</el-descriptions-item>
-        <el-descriptions-item label="地点">{{ detailRow.locationName || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="到达">{{ detailRow.arrivalAt || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="离开">{{ detailRow.departureAt || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="停留时长">
-          {{ detailRow.attendanceStatus === 'absent' ? '—' : formatDuration(detailRow.dwellSeconds) }}
-        </el-descriptions-item>
-      </el-descriptions>
+    <pagination
+      v-show="attendanceRows.length > 0"
+      :total="attendanceRows.length"
+      v-model:page="pageNum"
+      v-model:limit="pageSize"
+    />
+
+    <el-dialog v-model="formOpen" :title="formTitle" width="560px" append-to-body>
+      <el-form ref="formRef" :model="form" :rules="formRules" label-width="100px">
+        <el-form-item label="人员" prop="personId">
+          <el-select
+            v-model="form.personId"
+            filterable
+            remote
+            clearable
+            :disabled="isEdit"
+            :remote-method="searchPersons"
+            :loading="personLoading"
+            placeholder="输入姓名或学工号搜索"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="p in personOptions"
+              :key="p.personId"
+              :label="`${p.displayName}${p.employeeNo ? '（' + p.employeeNo + '）' : ''}`"
+              :value="p.personId"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="地点" prop="cameraId">
+          <el-select
+            v-model="form.cameraId"
+            clearable
+            filterable
+            placeholder="请选择地点"
+            style="width: 100%"
+            :disabled="form.attendanceStatus === 'absent'"
+          >
+            <el-option
+              v-for="item in cameraOptions"
+              :key="item.locationId"
+              :label="item.locationName"
+              :value="item.locationId"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="在场状态" prop="attendanceStatus">
+          <el-select v-model="form.attendanceStatus" placeholder="请选择在场状态" style="width: 100%">
+            <el-option label="未出勤" value="absent" />
+            <el-option label="在场中" value="present" />
+            <el-option label="已离场" value="left" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="到达时间" prop="arrivalAt" v-if="form.attendanceStatus !== 'absent'">
+          <el-date-picker
+            v-model="form.arrivalAt"
+            type="datetime"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            placeholder="到达时间"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="离开时间" prop="departureAt" v-if="form.attendanceStatus === 'left'">
+          <el-date-picker
+            v-model="form.departureAt"
+            type="datetime"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            placeholder="离开时间"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
       <template #footer>
-        <el-button type="primary" @click="detailVisible = false">关闭</el-button>
+        <el-button @click="formOpen = false">取 消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitForm">确 定</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, reactive, ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { addAttendance, updateAttendance } from '@/api/dashboard/attendance'
+import { listDeviceInfo } from '@/api/dashboard/device_info'
+import { listPerson } from '@/api/system/person'
 import { useDataBoardSummary } from '@/composables/useDataBoardSummary'
-import AttendanceStatPanel from '@/views/dashboard/shared/AttendanceStatPanel.vue'
-import { defaultQueryDate, isFutureDate } from '@/utils/statDateRange'
+import { isFutureDate } from '@/utils/statDateRange'
 import {
   attendanceStatusTagType,
   formatAttendanceStatus,
   formatPersonKindLabel
 } from '@/utils/personKind'
 
+const { proxy } = getCurrentInstance()
+const router = useRouter()
+
 const queryRef = ref()
-const detailVisible = ref(false)
-const detailRow = ref(null)
+const formRef = ref()
+const currentRow = ref(null)
+const pageNum = ref(1)
+const pageSize = ref(10)
+const showSearch = ref(true)
+const formOpen = ref(false)
+const formTitle = ref('')
+const isEdit = ref(false)
+const saving = ref(false)
+const personLoading = ref(false)
+const personOptions = ref([])
+const deviceOptions = ref([])
+
+const form = reactive({
+  personId: undefined,
+  cameraId: undefined,
+  attendanceStatus: 'present',
+  arrivalAt: undefined,
+  departureAt: undefined,
+  displayName: undefined,
+  employeeNo: undefined
+})
+
+const formRules = {
+  personId: [{ required: true, message: '请选择人员', trigger: 'change' }],
+  attendanceStatus: [{ required: true, message: '请选择在场状态', trigger: 'change' }],
+  cameraId: [{
+    validator: (_r, v, cb) => {
+      if (form.attendanceStatus === 'absent') return cb()
+      if (!v) return cb(new Error('请选择地点'))
+      cb()
+    },
+    trigger: 'change'
+  }]
+}
 
 const {
   loading,
   queryDate,
   timeRange,
   sessionFilters,
-  summary,
   attendanceRows,
-  personRows,
+  locationOptions,
   loadSummary,
   formatDuration,
   resetQueryFilters
@@ -170,57 +273,34 @@ const {
   recentLimit: 500
 })
 
-function formatRateDateLabel(dateStr) {
-  const d = dateStr || defaultQueryDate()
-  const today = defaultQueryDate()
-  if (d === today) return '当日'
-  const parts = d.split('-')
-  if (parts.length === 3) return `${parts[1]}-${parts[2]}`
-  return d
+const cameraOptions = computed(() => {
+  const fromSummary = (locationOptions.value || []).map(item => ({
+    locationId: item.locationId,
+    locationName: item.locationName
+  }))
+  if (fromSummary.length) return fromSummary
+  return deviceOptions.value
+})
+
+const pagedAttendanceRows = computed(() => {
+  const start = (pageNum.value - 1) * pageSize.value
+  return attendanceRows.value.slice(start, start + pageSize.value)
+})
+
+function loadDevices() {
+  listDeviceInfo({ pageNum: 1, pageSize: 100 }).then(res => {
+    deviceOptions.value = (res.rows || []).map(item => ({
+      locationId: item.id,
+      locationName: item.deviceName || item.deviceCode || `设备${item.id}`
+    }))
+  }).catch(() => {
+    deviceOptions.value = []
+  })
 }
 
-const rateDateLabel = computed(() =>
-  formatRateDateLabel(summary.value.beginDate || queryDate.value)
-)
-
-const statCards = computed(() => [
-  {
-    key: 'attendance',
-    label: '考勤人数',
-    value: summary.value.sessionCount ?? 0,
-    tag: '汇总',
-    color: 'blue',
-    icon: 'Calendar',
-    desc: `已知 ${summary.value.knownVisitorCount ?? 0} · 陌生 ${summary.value.strangerVisitorCount ?? 0}`
-  },
-  {
-    key: 'open',
-    label: '在场中',
-    value: summary.value.openSessionCount ?? 0,
-    tag: '实时',
-    color: 'green',
-    icon: 'View',
-    desc: `当前在场人数为 ${summary.value.openSessionCount ?? 0} 人`
-  },
-  {
-    key: 'visitor',
-    label: '人员档案',
-    value: personRows.value.length,
-    tag: '档案',
-    color: 'yellow',
-    icon: 'User',
-    desc: '已录入人脸与体态档案'
-  },
-  {
-    key: 'attendanceRate',
-    label: '出勤率',
-    value: `${summary.value.attendanceRatePercent ?? 0}%`,
-    tag: rateDateLabel.value,
-    color: 'red',
-    icon: 'PieChart',
-    desc: `${rateDateLabel.value}出勤 ${summary.value.todayKnownAttendanceCount ?? 0} / 在案 ${summary.value.registeredPersonCount ?? 0} 人（不含陌生人）`
-  }
-])
+onMounted(() => {
+  loadDevices()
+})
 
 function disableFutureDate(date) {
   const y = date.getFullYear()
@@ -230,11 +310,108 @@ function disableFutureDate(date) {
 }
 
 function openDetail(row) {
-  detailRow.value = row
-  detailVisible.value = true
+  if (!row?.personId) {
+    proxy.$modal.msgWarning('该记录未关联人员')
+    return
+  }
+  router.push(`/system/person-detail/index/${row.personId}`)
+}
+
+function resetForm() {
+  form.personId = undefined
+  form.cameraId = undefined
+  form.attendanceStatus = 'present'
+  form.arrivalAt = undefined
+  form.departureAt = undefined
+  form.displayName = undefined
+  form.employeeNo = undefined
+  personOptions.value = []
+  proxy.resetForm('formRef')
+}
+
+function handleAdd() {
+  resetForm()
+  isEdit.value = false
+  formTitle.value = '新增考勤'
+  if (cameraOptions.value?.length === 1) {
+    form.cameraId = cameraOptions.value[0].locationId
+  }
+  formOpen.value = true
+  searchPersons('')
+}
+
+function handleUpdate(row) {
+  const target = row || currentRow.value
+  if (!target) {
+    proxy.$modal.msgWarning('请先选择一条考勤记录')
+    return
+  }
+  resetForm()
+  isEdit.value = true
+  formTitle.value = '修改考勤'
+  form.personId = target.personId
+  form.cameraId = target.cameraId
+  form.attendanceStatus = target.attendanceStatus || 'absent'
+  form.arrivalAt = target.arrivalAt || undefined
+  form.departureAt = target.departureAt || undefined
+  form.displayName = target.displayName
+  form.employeeNo = target.employeeNo
+  personOptions.value = [{
+    personId: target.personId,
+    displayName: target.displayName,
+    employeeNo: target.employeeNo
+  }]
+  if (!form.cameraId && cameraOptions.value?.length === 1) {
+    form.cameraId = cameraOptions.value[0].locationId
+  }
+  formOpen.value = true
+}
+
+function searchPersons(keyword) {
+  personLoading.value = true
+  listPerson({
+    pageNum: 1,
+    pageSize: 20,
+    displayName: keyword || undefined,
+    employeeNo: /^\d+$/.test(keyword || '') ? keyword : undefined
+  }).then(res => {
+    personOptions.value = res.rows || []
+  }).finally(() => {
+    personLoading.value = false
+  })
+}
+
+function submitForm() {
+  formRef.value?.validate(valid => {
+    if (!valid) return
+    if (!queryDate.value) {
+      proxy.$modal.msgWarning('请先选择日期')
+      return
+    }
+    const payload = {
+      personId: form.personId,
+      cameraId: form.cameraId,
+      attendanceStatus: form.attendanceStatus,
+      statDate: queryDate.value,
+      arrivalAt: form.attendanceStatus === 'absent' ? undefined : form.arrivalAt,
+      departureAt: form.attendanceStatus === 'left' ? form.departureAt : undefined
+    }
+    saving.value = true
+    const req = isEdit.value ? updateAttendance(payload) : addAttendance(payload)
+    req.then(() => {
+      proxy.$modal.msgSuccess(isEdit.value ? '修改成功' : '新增成功')
+      formOpen.value = false
+      loadSummary()
+    }).catch(e => {
+      proxy.$modal.msgError(e?.message || (isEdit.value ? '修改失败' : '新增失败'))
+    }).finally(() => {
+      saving.value = false
+    })
+  })
 }
 
 function handleQuery() {
+  pageNum.value = 1
   loadSummary()
 }
 
@@ -244,6 +421,7 @@ function handleRefresh() {
 
 function resetQuery() {
   resetQueryFilters()
+  pageNum.value = 1
   loadSummary()
 }
 </script>
@@ -251,9 +429,11 @@ function resetQuery() {
 <style scoped lang="scss">
 @import '@/views/dashboard/shared/board-page.scss';
 
-.panel-extra {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.list-table-wrap {
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 </style>

@@ -192,7 +192,12 @@ export function useDataBoardSummary(options = {}) {
     Object.keys(editForm).forEach(key => delete editForm[key])
     Object.assign(editForm, JSON.parse(JSON.stringify(row)))
     if (type === 'stranger') {
-      editForm.identityType = editForm.identityType || 'stranger'
+      editForm.personType = editForm.personType || 'stranger'
+      editForm.gender = String(editForm.gender ?? '2')
+      editForm.employeeNo = editForm.employeeNo || ''
+      editForm.phone = editForm.phone || ''
+      editForm.note = editForm.note || ''
+      editForm.relatedTrackKeys = Array.isArray(editForm.relatedTrackKeys) ? [...editForm.relatedTrackKeys] : []
     }
     editDialogVisible.value = true
   }
@@ -230,8 +235,12 @@ export function useDataBoardSummary(options = {}) {
       } else if (editMode.value === 'stranger') {
         await updateDataBoardStranger(editForm.trackKey, {
           displayName: editForm.displayName,
-          tagsText: editForm.tagsText,
-          identityType: editForm.identityType
+          employeeNo: editForm.employeeNo,
+          personType: editForm.personType || 'stranger',
+          gender: String(editForm.gender ?? '2'),
+          phone: editForm.phone || '',
+          note: editForm.note || '',
+          relatedTrackKeys: editForm.relatedTrackKeys || []
         })
       } else if (editMode.value === 'location') {
         const cameraId = editForm.cameraId ?? editForm.locationId
@@ -245,8 +254,9 @@ export function useDataBoardSummary(options = {}) {
       }
       await loadSummary()
       ElMessage.success('保存成功')
-    } finally {
       editDialogVisible.value = false
+    } catch (e) {
+      ElMessage.error(e?.message || '保存失败')
     }
   }
 

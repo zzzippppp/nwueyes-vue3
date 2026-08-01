@@ -83,6 +83,19 @@ export const constantRoutes = [
         meta: { title: '个人中心', icon: 'user' }
       }
     ]
+  },
+  {
+    path: '/system/person-detail',
+    component: Layout,
+    hidden: true,
+    children: [
+      {
+        path: 'index/:personId(\\d+)',
+        component: () => import('@/views/system/person/detail'),
+        name: 'PersonDetail',
+        meta: { title: '人员详情', activeMenu: '/system/person' }
+      }
+    ]
   }
 ]
 

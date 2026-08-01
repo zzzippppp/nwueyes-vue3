@@ -5,12 +5,13 @@
     :style="{ backgroundColor: sideTheme === 'theme-dark' ? variables.menuBackground : variables.menuLightBackground }"
   >
     <router-link class="sidebar-logo-link" to="/">
+      <img :src="logo" class="sidebar-logo" alt="logo" />
       <span
+        v-if="!collapse"
         class="sidebar-title"
-        :class="{ 'sidebar-title--collapse': collapse }"
         :style="{ color: sideTheme === 'theme-dark' ? variables.logoTitleColor : variables.logoLightTitleColor }"
       >
-        {{ collapse ? '考勤' : title }}
+        {{ title }}
       </span>
     </router-link>
   </div>
@@ -27,6 +28,8 @@ defineProps({
   }
 })
 
+/** 与浏览器页签图标一致：public/logo-anisc.png */
+const logo = '/logo-anisc.png'
 const title = import.meta.env.VITE_APP_TITLE
 const settingsStore = useSettingsStore()
 const sideTheme = computed(() => settingsStore.sideTheme)
@@ -50,12 +53,20 @@ const sideTheme = computed(() => settingsStore.sideTheme)
 .sidebar-logo-link {
   display: flex !important;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 10px;
   width: 100%;
   height: 50px;
   padding: 0 16px;
   box-sizing: border-box;
   text-decoration: none;
+}
+
+.sidebar-logo {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  object-fit: contain;
 }
 
 .sidebar-title {
@@ -68,14 +79,9 @@ const sideTheme = computed(() => settingsStore.sideTheme)
   line-height: 1.2;
   color: #1f2937;
   font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  text-align: center;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.sidebar-title--collapse {
-  font-size: 14px;
-  text-align: center;
 }
 </style>
