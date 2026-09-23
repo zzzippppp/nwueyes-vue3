@@ -81,7 +81,7 @@
             </el-form-item>
 
             <el-alert
-              v-if="recognizeStatus === 'failed' && recognizeMessage"
+              v-if="isThisCameraFailed && recognizeMessage"
               type="error"
               :closable="true"
               show-icon
@@ -120,14 +120,14 @@
               <el-button
                 type="success"
                 :loading="recognizeStarting"
-                :disabled="recognizeRunning || configLoading || !form.cameraId"
+                :disabled="isThisCameraRecognizing || configLoading || !form.cameraId"
                 @click="handleStartRecognize"
               >
                 开始识别
               </el-button>
               <el-button
                 type="warning"
-                :disabled="!recognizeTaskId"
+                :disabled="!isThisCameraRecognizing"
                 :loading="recognizeStopping"
                 @click="handleStopRecognize"
               >
@@ -371,12 +371,15 @@ const form = reactive({
   streamMode: "lan_rtsp"
 });
 
-const recognizeStarting = computed(() => liveStore.starting);
-const recognizeStopping = computed(() => liveStore.stopping);
-const recognizeTaskId = computed(() => liveStore.taskId);
-const recognizeStatus = computed(() => liveStore.status);
-const recognizeMessage = computed(() => liveStore.message);
-const recognizeLogTail = computed(() => liveStore.logTail || '');
+// 当前抽屉对应的摄像头 ID（多摄像头并行：状态全部按此摄像头独立读取）
+const currentCameraId = computed(() => form.cameraId ?? props.camera?.id ?? null);
+
+const recognizeStarting = computed(() => liveStore.isCameraStarting(currentCameraId.value));
+const recognizeStopping = computed(() => liveStore.isCameraStopping(currentCameraId.value));
+const recognizeTaskId = computed(() => liveStore.taskIdOf(currentCameraId.value));
+const recognizeStatus = computed(() => liveStore.statusOf(currentCameraId.value));
+const recognizeMessage = computed(() => liveStore.messageOf(currentCameraId.value));
+const recognizeLogTail = computed(() => liveStore.logTailOf(currentCameraId.value) || '');
 const recognizeLogTailPreview = computed(() => {
   const tail = recognizeLogTail.value.trim();
   if (!tail) {
@@ -456,13 +459,20 @@ const configStatusType = computed(() => {
   return tagTypeMap[configState.value] || "info";
 });
 
-const recognizeRunning = computed(() =>
-  recognizeStatus.value === "running"
-  || recognizeStatus.value === "starting"
-  || recognizeStatus.value === "reconnecting"
+const isThisCameraRecognizing = computed(() =>
+  liveStore.isCameraRecognizing(form.cameraId || props.camera?.id, form.deviceSerial || props.camera?.serialNo)
 );
 
+const isThisCameraFailed = computed(() =>
+  liveStore.isCameraFailed(form.cameraId || props.camera?.id, form.deviceSerial || props.camera?.serialNo)
+);
+
+const recognizeRunning = computed(() => isThisCameraRecognizing.value);
+
 const recognizeStatusText = computed(() => {
+  if (!isThisCameraRecognizing.value && !isThisCameraFailed.value) {
+    return "未启动";
+  }
   const map = {
     idle: "未启动",
     starting: "启动中",
@@ -477,6 +487,9 @@ const recognizeStatusText = computed(() => {
 });
 
 const recognizeStatusTagType = computed(() => {
+  if (!isThisCameraRecognizing.value && !isThisCameraFailed.value) {
+    return "info";
+  }
   const map = {
     idle: "info",
     starting: "warning",
@@ -659,14 +672,14 @@ async function handleStop() {
   await teardownPlayer();
 }
 
-function syncFormFromLiveStore() {
-  if (liveStore.cameraId) {
-    form.cameraId = liveStore.cameraId;
-    applyCameraToForm(cameraOptions.value.find((c) => c.id === liveStore.cameraId));
+function bindCameraFromProp() {
+  const fromProp = props.camera;
+  if (!fromProp) {
+    return;
   }
-  if (liveStore.deviceSerial) {
-    form.deviceSerial = liveStore.deviceSerial;
-  }
+  const matched = cameraOptions.value.find((c) => Number(c.id) === Number(fromProp.id)) || fromProp;
+  form.cameraId = matched.id;
+  applyCameraToForm(matched);
   form.streamMode = "lan_rtsp";
 }
 
@@ -886,6 +899,8 @@ async function handleStartRecognize() {
   if (!isValid) {
     return;
   }
+  // 多摄像头并行：不再拦截「已有其他摄像头在识别」，各摄像头独立启动
+  const cameraId = form.cameraId ?? props.camera?.id;
   try {
     const task = await liveStore.startRecognize({
       cameraId: form.cameraId,
@@ -894,10 +909,10 @@ async function handleStartRecognize() {
       validCode: form.validCode || undefined,
       streamMode: "lan_rtsp"
     });
-    syncFormFromLiveStore();
-    if (liveStore.status === "running") {
+    const status = liveStore.statusOf(cameraId);
+    if (status === "running") {
       proxy.$modal.msgSuccess("直播识别已启动");
-    } else if (liveStore.status === "starting" || liveStore.status === "reconnecting") {
+    } else if (status === "starting" || status === "reconnecting") {
       proxy.$modal.msgSuccess("正在连接直播流，请稍候…");
     }
     if (task?.status === "failed" && task?.message) {
@@ -908,9 +923,8 @@ async function handleStartRecognize() {
     const msg = error?.response?.data?.msg || normalizeError(error);
     if (!code && /timeout/i.test(msg)) {
       await liveStore.syncFromServer();
-      if (liveStore.active) {
+      if (liveStore.isCameraActive(cameraId)) {
         liveStore.startPoll();
-        syncFormFromLiveStore();
         proxy.$modal.msgWarning("连接较慢，已在后台继续尝试打开直播流…");
         return;
       }
@@ -923,17 +937,16 @@ async function handleStartRecognize() {
     } else {
       proxy.$modal.msgError(`启动识别失败：${msg}`);
     }
-    liveStore.$patch({ status: 'failed', message: msg });
-    liveStore.persist();
+    liveStore.markFailed(cameraId, msg);
   }
 }
 
 async function handleStopRecognize() {
-  if (!recognizeTaskId.value) {
+  if (!isThisCameraRecognizing.value || !recognizeTaskId.value) {
     return;
   }
   try {
-    await liveStore.stopRecognize();
+    await liveStore.stopRecognize(form.cameraId ?? props.camera?.id, form.deviceSerial || props.camera?.serialNo);
     proxy.$modal.msgSuccess("直播识别已停止");
   } catch (error) {
     proxy.$modal.msgError(`停止识别失败：${normalizeError(error)}`);
@@ -949,14 +962,10 @@ watch(
   () => props.visible,
   async (val) => {
     if (val) {
-      if (props.camera) {
-        form.cameraId = props.camera.id
-        applyCameraToForm(props.camera)
-      }
-      form.streamMode = "lan_rtsp"
+      bindCameraFromProp();
       await liveStore.bootstrap();
-      syncFormFromLiveStore();
       await fetchScreenConfig();
+      bindCameraFromProp();
     } else {
       await teardownPlayer("idle");
     }
@@ -964,7 +973,7 @@ watch(
 );
 
 watch(recognizeStatus, (status, prev) => {
-  if (status === 'failed' && prev !== 'failed' && recognizeMessage.value && props.visible) {
+  if (status === 'failed' && prev !== 'failed' && isThisCameraFailed.value && recognizeMessage.value && props.visible) {
     proxy.$modal.msgError(`识别异常结束：${recognizeMessage.value}`);
   }
 });

@@ -263,8 +263,7 @@
           </el-table-column>
           <el-table-column label="匹配分" width="100">
             <template #default="{ row }">
-              <span v-if="row.eventType === 'enter'">{{ formatScore(row.faceMatchScore) }}</span>
-              <span v-else>{{ formatScore(row.bodyMatchScore) }}</span>
+              <span>{{ formatScore(row.faceMatchScore) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="监控画面" width="148">

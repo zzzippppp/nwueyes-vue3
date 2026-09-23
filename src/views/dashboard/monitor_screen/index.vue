@@ -139,27 +139,19 @@ function onlineTagType(row) {
 }
 
 function isRecognizingCamera(row) {
-  if (!row?.id) return false
-  const byCameraId = liveStore.cameraId != null && Number(liveStore.cameraId) === Number(row.id)
-  const rowSerial = String(row.serialNo || row.deviceSerial || '').toUpperCase()
-  const storeSerial = String(liveStore.deviceSerial || '').toUpperCase()
-  const bySerial = !!rowSerial && !!storeSerial && rowSerial === storeSerial
-  if (!byCameraId && !bySerial) return false
-  // starting 过程中 taskId 可能尚未回填，也要立刻反映到列表
-  return liveStore.active || liveStore.starting || liveStore.status === 'starting' || liveStore.status === 'running' || liveStore.status === 'reconnecting'
+  return liveStore.isCameraRecognizing(row?.id, row?.serialNo || row?.deviceSerial)
 }
 
 function recognizeLabel(row) {
+  const cameraId = row?.id
   if (isRecognizingCamera(row)) {
-    if (liveStore.status === 'starting' || liveStore.starting) return '启动中'
-    if (liveStore.status === 'reconnecting') return '重连中'
-    if (liveStore.status === 'running') return '运行中'
-    if (liveStore.status === 'failed') return '异常'
+    const status = liveStore.statusOf(cameraId)
+    if (status === 'starting' || liveStore.isCameraStarting(cameraId)) return '启动中'
+    if (status === 'reconnecting') return '重连中'
+    if (status === 'running') return '运行中'
+    if (status === 'failed') return '异常'
   }
-  if (liveStore.status === 'failed' && (
-    (liveStore.cameraId != null && Number(liveStore.cameraId) === Number(row.id))
-    || (String(row.serialNo || '').toUpperCase() === String(liveStore.deviceSerial || '').toUpperCase() && liveStore.deviceSerial)
-  )) {
+  if (liveStore.isCameraFailed(row?.id, row?.serialNo || row?.deviceSerial)) {
     return '异常'
   }
   return '未启动'

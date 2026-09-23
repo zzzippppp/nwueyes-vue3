@@ -82,7 +82,7 @@
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane :label="`人员档案(${personRows.length})`" name="person">
+      <el-tab-pane :label="`人员档案(${summary.registeredPersonCount ?? personRows.length})`" name="person">
         <div class="tab-actions">
           <el-button type="primary" @click="openUploadDialog">上传人脸</el-button>
         </div>
@@ -90,7 +90,7 @@
           <el-table-column prop="personId" label="ID" min-width="70" />
           <el-table-column prop="displayName" label="当前名称" min-width="160" />
           <el-table-column prop="personKind" label="类型" min-width="90">
-            <template #default="{ row }">{{ row.personKind === 'known' ? '已知' : '陌生人' }}</template>
+            <template #default="{ row }">{{ formatPersonKindLabel(row.personKind) }}</template>
           </el-table-column>
           <el-table-column prop="tagsText" label="标签" min-width="140" />
           <el-table-column prop="note" label="备注" min-width="140">
@@ -102,19 +102,6 @@
                 v-if="rowFaceUrl(row)"
                 :src="resolveMediaUrl(rowFaceUrl(row))"
                 :preview-src-list="previewList(rowFaceUrl(row))"
-                preview-teleported
-                fit="cover"
-                class="thumb thumb-preview"
-              />
-              <span v-else>—</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="bodyImageUrl" label="体态" min-width="90">
-            <template #default="{ row }">
-              <el-image
-                v-if="rowBodyUrl(row)"
-                :src="resolveMediaUrl(rowBodyUrl(row))"
-                :preview-src-list="previewList(rowBodyUrl(row))"
                 preview-teleported
                 fit="cover"
                 class="thumb thumb-preview"
@@ -215,7 +202,6 @@
         <el-form-item label="类型">
           <el-select v-model="uploadForm.personKind" style="width: 100%">
             <el-option label="已知人员" value="known" />
-            <el-option label="陌生人" value="stranger" />
           </el-select>
         </el-form-item>
         <el-form-item label="标签">
@@ -260,6 +246,7 @@ import {
   uploadDataBoardFace
 } from '@/api/dashboard/data_board'
 import { dateRangeParams, defaultDateRange } from '@/utils/statDateRange'
+import { formatPersonKindLabel } from '@/utils/personKind'
 
 const loading = ref(false)
 const queryRef = ref()
@@ -299,9 +286,9 @@ const locationOptions = computed(() => {
 
 const statCards = computed(() => {
   return [
-    { key: 'visitor', label: '人员', value: personRows.value.length },
+    { key: 'visitor', label: '人员档案', value: summary.value.registeredPersonCount ?? personRows.value.length },
     { key: 'stranger', label: '陌生人', value: strangerRows.value.length },
-    { key: 'attendance', label: '今日考勤人数', value: summary.value.sessionCount ?? 0 },
+    { key: 'attendance', label: '今日考勤人数', value: summary.value.todayKnownAttendanceCount ?? 0 },
     { key: 'open', label: '在场中', value: summary.value.openSessionCount ?? 0 },
     { key: 'point', label: '点位', value: locationRows.value.length }
   ]

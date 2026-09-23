@@ -5,20 +5,20 @@
       <div class="stat-card is-blue">
         <div class="stat-card-icon"><el-icon :size="60"><Calendar /></el-icon></div>
         <div class="stat-card-label">考勤人数</div>
-        <div class="stat-card-value">{{ (summary.knownVisitorCount ?? 0) + (summary.strangerVisitorCount ?? 0) }}</div>
-        <div class="stat-card-desc">在场 {{ summary.openSessionCount ?? 0 }} · 已离 {{ ((summary.knownVisitorCount ?? 0) + (summary.strangerVisitorCount ?? 0)) - (summary.openSessionCount ?? 0) }} · 陌生 {{ summary.strangerVisitorCount ?? 0 }}</div>
+        <div class="stat-card-value">{{ knownAttendanceCount }}</div>
+        <div class="stat-card-desc">今日考勤 {{ knownAttendanceCount }} 人</div>
       </div>
       <div class="stat-card is-green">
         <div class="stat-card-icon"><el-icon :size="60"><View /></el-icon></div>
         <div class="stat-card-label">在场中</div>
-        <div class="stat-card-value">{{ summary.openSessionCount ?? 0 }}</div>
-        <div class="stat-card-desc">当前在场 {{ summary.openSessionCount ?? 0 }} 人</div>
+        <div class="stat-card-value">{{ knownOpenCount }}</div>
+        <div class="stat-card-desc">当前在场 {{ knownOpenCount }} 人</div>
       </div>
       <div class="stat-card is-yellow">
         <div class="stat-card-icon"><el-icon :size="60"><User /></el-icon></div>
         <div class="stat-card-label">人员档案</div>
-        <div class="stat-card-value">{{ personRows.length }}</div>
-        <div class="stat-card-desc">已录入人脸与体态档案</div>
+        <div class="stat-card-value">{{ registeredPersonCount }}</div>
+        <div class="stat-card-desc">已录入学生和教职工档案</div>
       </div>
       <div class="stat-card is-red">
         <div class="stat-card-icon"><el-icon :size="60"><PieChart /></el-icon></div>
@@ -56,7 +56,16 @@
             <el-table-column prop="dwellSeconds" label="停留时长" width="100" align="center">
               <template #default="{ row }">{{ formatDuration(row.dwellSeconds) }}</template>
             </el-table-column>
-            <el-table-column prop="passageCount" label="进出次数" width="80" align="center" />
+            <el-table-column label="是否在场" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.attendanceStatus === 'present' ? 'warning' : 'success'" size="small">
+                  {{ row.attendanceStatus === 'present' ? '在场' : '已离开' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="进/出" width="80" align="center">
+              <template #default="{ row }">{{ row.enterCount ?? 0 }}/{{ row.exitCount ?? 0 }}</template>
+            </el-table-column>
           </el-table>
         </div>
       </div>
@@ -69,25 +78,23 @@
             最近进出记录
           </div>
           <div class="session-list">
-            <div v-for="(item, idx) in recentSessions" :key="idx" class="session-item">
+            <div v-for="(item, idx) in recentLogs" :key="idx" class="session-item">
               <div class="session-avatar">
-                <el-avatar :size="36" :src="item.faceImageUrl || undefined" icon="UserFilled" />
+                <el-avatar :size="36" :src="resolveMediaUrl(item.faceImageUrl)" icon="UserFilled" />
               </div>
               <div class="session-info">
                 <div class="session-name">
                   <span>{{ item.displayName || '未知' }}</span>
-                  <el-tag :type="statusTagType(item.status)" size="small" class="session-tag">
-                    {{ statusLabel(item.status) }}
+                  <el-tag :type="eventTagType(item.eventType)" size="small" class="session-tag">
+                    {{ eventLabel(item.eventType) }}
                   </el-tag>
                 </div>
                 <div class="session-meta">
-                  <span>{{ item.arrivalAt ? formatTime(item.arrivalAt) : '—' }}</span>
-                  <span v-if="item.departureAt"> → {{ formatTime(item.departureAt) }}</span>
-                  <span v-else-if="item.status === 'open'" class="session-still">仍在场</span>
+                  <span>{{ item.eventTime ? formatTime(item.eventTime) : '—' }}</span>
                 </div>
               </div>
             </div>
-            <div v-if="recentSessions.length === 0" class="empty-tip">暂无进出记录</div>
+            <div v-if="recentLogs.length === 0" class="empty-tip">暂无进出记录</div>
           </div>
         </div>
       </div>
@@ -107,8 +114,14 @@ let chartInstance = null
 
 const summary = ref({})
 const personRows = ref([])
-const recentSessions = ref([])
+const recentLogs = ref([])
 const weeklyData = ref([])
+
+const apiBase = import.meta.env.VITE_APP_BASE_API || ''
+
+const knownAttendanceCount = computed(() => Number(summary.value.todayKnownAttendanceCount ?? 0))
+const knownOpenCount = computed(() => Number(summary.value.openSessionCount ?? 0))
+const registeredPersonCount = computed(() => Number(summary.value.registeredPersonCount ?? 0))
 
 const rankRows = computed(() => {
   const rows = [...(summary.value.attendanceItems || [])]
@@ -136,14 +149,27 @@ function formatTime(dateStr) {
   return `${h}:${m}`
 }
 
-function statusLabel(status) {
-  const map = { open: '在场', closed: '已离开' }
-  return map[status] || status || '—'
+function resolveMediaUrl(rawUrl) {
+  if (!rawUrl) return ''
+  if (/^(https?:|data:)/i.test(rawUrl)) return rawUrl
+  let path = rawUrl
+  if (path.startsWith('/face-library/')) {
+    path = `/dashboard/data-board/file/face/${path.split('/').pop()}`
+  } else if (path.startsWith('/body-library/')) {
+    path = `/dashboard/data-board/file/body/${path.split('/').pop()}`
+  }
+  if (apiBase && path.startsWith(apiBase)) return path
+  return apiBase ? apiBase + path : path
 }
 
-function statusTagType(status) {
-  const map = { open: 'warning', closed: 'success' }
-  return map[status] || 'info'
+function eventLabel(eventType) {
+  const map = { enter: '进门', exit: '出门' }
+  return map[eventType] || eventType || '—'
+}
+
+function eventTagType(eventType) {
+  const map = { enter: 'success', exit: 'warning' }
+  return map[eventType] || 'info'
 }
 
 function getToday() {
@@ -180,7 +206,7 @@ async function loadTodayData() {
     const data = res.data || {}
     summary.value = data
     personRows.value = data.personItems || []
-    recentSessions.value = (data.recentSessions || []).slice(0, 10)
+    recentLogs.value = (data.recentLogs || []).slice(0, 10)
   } catch (e) {
     console.error('加载今日数据失败', e)
   }
@@ -197,10 +223,8 @@ async function loadWeeklyData() {
       getDataBoardSummary({ beginDate: date, endDate: date, recentLimit: 1 }).then(res => ({
         date,
         label: getWeekdayLabel(date),
-        count: res.data?.sessionCount || 0,
-        known: res.data?.knownVisitorCount || 0,
-        stranger: res.data?.strangerVisitorCount || 0
-      })).catch(() => ({ date, label: getWeekdayLabel(date), count: 0, known: 0, stranger: 0 }))
+        count: res.data?.todayKnownAttendanceCount || 0
+      })).catch(() => ({ date, label: getWeekdayLabel(date), count: 0 }))
     )
   )
 
@@ -216,7 +240,6 @@ function renderChart() {
 
   const labels = weeklyData.value.map(d => d.label)
   const totalData = weeklyData.value.map(d => d.count)
-  const knownData = weeklyData.value.map(d => d.known)
 
   chartInstance.setOption({
     tooltip: {
@@ -230,7 +253,7 @@ function renderChart() {
       }
     },
     legend: {
-      data: ['总人数', '已知人员'],
+      data: ['考勤人员'],
       bottom: 0,
       textStyle: { fontSize: 12 }
     },
@@ -257,7 +280,7 @@ function renderChart() {
     },
     series: [
       {
-        name: '总人数',
+        name: '考勤人员',
         type: 'line',
         smooth: true,
         symbol: 'circle',
@@ -271,22 +294,6 @@ function renderChart() {
           ])
         },
         data: totalData
-      },
-      {
-        name: '已知人员',
-        type: 'line',
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        itemStyle: { color: '#67c23a' },
-        lineStyle: { width: 2.5 },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(103,194,58,0.2)' },
-            { offset: 1, color: 'rgba(103,194,58,0.02)' }
-          ])
-        },
-        data: knownData
       }
     ]
   })
@@ -515,11 +522,6 @@ onUnmounted(() => {
   font-size: 12px;
   color: #909399;
   margin-top: 2px;
-}
-
-.session-still {
-  color: #e6a23c;
-  font-weight: 500;
 }
 
 .empty-tip {

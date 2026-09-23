@@ -23,7 +23,6 @@
         <el-select v-model="queryParams.personType" placeholder="人员类型" clearable style="width: 200px">
           <el-option label="学生" value="student" />
           <el-option label="教职工" value="staff" />
-          <el-option label="陌生人" value="stranger" />
         </el-select>
       </el-form-item>
       <el-form-item label="状态" prop="status">
@@ -122,7 +121,6 @@
           <el-select v-model="form.personType" placeholder="请选择类型" style="width: 100%">
             <el-option label="学生" value="student" />
             <el-option label="教职工" value="staff" />
-            <el-option label="陌生人" value="stranger" />
           </el-select>
         </el-form-item>
         <el-form-item label="性别" prop="gender">

@@ -46,7 +46,6 @@
         <el-select v-model="sessionFilters.personType" clearable placeholder="全部类型" style="width: 140px">
           <el-option label="学生" value="student" />
           <el-option label="教职工" value="staff" />
-          <el-option label="陌生人" value="stranger" />
         </el-select>
       </el-form-item>
       <el-form-item label="状态" prop="sessionStatus">
@@ -94,7 +93,9 @@
         <el-table-column prop="personKind" label="人员类型" min-width="100">
           <template #default="{ row }">{{ formatPersonKindLabel(row.personKind) }}</template>
         </el-table-column>
-        <el-table-column prop="passageCount" label="进出次数" min-width="100" />
+        <el-table-column label="进/出" min-width="100">
+          <template #default="{ row }">{{ row.enterCount ?? 0 }}/{{ row.exitCount ?? 0 }}</template>
+        </el-table-column>
         <el-table-column prop="arrivalAt" label="到达" min-width="165">
           <template #default="{ row }">{{ row.arrivalAt || '—' }}</template>
         </el-table-column>
